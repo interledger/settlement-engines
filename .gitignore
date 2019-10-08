@@ -1,0 +1,14 @@
+target/
+**/*.rs.bk
+.vscode
+.idea
+*.code-workspace
+*.csv*
+*.ods*
+*.xls*
+*.rdb
+*.aof
+cmake-build-debug/
+**/*.log
+.DS_Store
+
