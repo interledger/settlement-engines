@@ -9,27 +9,13 @@
 //! xrp_ledger, etc.
 #![recursion_limit = "128"]
 
-#[macro_use]
-extern crate tower_web;
-
 use futures::Future;
 
 // Export all the engines
 mod api;
 pub mod engines;
 pub mod stores;
-pub use self::api::SettlementEngineApi;
-
-#[derive(Extract, Debug, Clone, Hash)]
-pub struct CreateAccount {
-    id: String,
-}
-
-impl CreateAccount {
-    pub fn new<T: ToString>(id: T) -> Self {
-        CreateAccount { id: id.to_string() }
-    }
-}
+pub use self::api::create_settlement_engine_filter;
 
 use http::StatusCode;
 use interledger_settlement::Quantity;
@@ -53,6 +39,6 @@ pub trait SettlementEngine {
 
     fn create_account(
         &self,
-        account_id: CreateAccount,
+        account_id: String,
     ) -> Box<dyn Future<Item = ApiResponse, Error = ApiResponse> + Send>;
 }

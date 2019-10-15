@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use web3::types::{Address, H256, U256};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 /// An Ethereum account is associated with an address. We additionally require
 /// that an optional `token_address` is implemented. If the `token_address` of an
@@ -35,7 +35,7 @@ pub trait EthereumAccount {
     }
 }
 
-#[derive(Debug, Extract, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Copy)]
 pub struct Addresses {
     pub own_address: Address,
     pub token_address: Option<Address>,

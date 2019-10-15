@@ -1,6 +1,7 @@
 use super::types::{Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore};
 use super::utils::{filter_transfer_logs, make_tx, sent_to_us, ERC20Transfer};
 use super::EthAddress;
+use crate::create_settlement_engine_filter;
 use clarity::Signature;
 use log::{debug, error, trace};
 use parking_lot::RwLock;
@@ -24,7 +25,6 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{str, u64};
-use tokio::net::TcpListener;
 use tokio::timer::Interval;
 use tokio_retry::{strategy::ExponentialBackoff, Retry};
 use url::Url;
@@ -38,7 +38,7 @@ use web3::{
 };
 
 use crate::stores::redis_ethereum_ledger::*;
-use crate::{ApiResponse, CreateAccount, SettlementEngine, SettlementEngineApi};
+use crate::{ApiResponse, SettlementEngine};
 use interledger_settlement::{scale_with_precision_loss, LeftoversStore, Quantity};
 use secrecy::Secret;
 
@@ -710,11 +710,10 @@ where
     /// the store.
     fn create_account(
         &self,
-        account_id: CreateAccount,
+        account_id: String,
     ) -> Box<dyn Future<Item = ApiResponse, Error = ApiResponse> + Send> {
         let self_clone = self.clone();
         let store: S = self.store.clone();
-        let account_id = account_id.id;
         let signer = self.signer.clone();
         let address = self.address;
 
@@ -1052,12 +1051,9 @@ pub fn run_ethereum_engine(opt: EthereumLedgerOpt) -> impl Future<Item = (), Err
             .token_address(opt.token_address)
             .connect();
 
-            let listener = TcpListener::bind(&opt.settlement_api_bind_address)
-                .expect("Unable to bind to Settlement Engine address");
-
             engine_fut.and_then(move |engine| {
-                let api = SettlementEngineApi::new(engine, ethereum_store);
-                tokio::spawn(api.serve(listener.incoming()));
+                let api = create_settlement_engine_filter(engine, ethereum_store);
+                tokio::spawn(warp::serve(api).bind(opt.settlement_api_bind_address));
                 info!(
                     "Ethereum Settlement Engine listening on: {}",
                     &opt.settlement_api_bind_address
@@ -1161,7 +1157,7 @@ mod tests {
 
         // the signed message does not match. We are not able to make Mockito
         // capture the challenge and return a signature on it.
-        let ret = block_on(engine.create_account(CreateAccount::new(bob.id))).unwrap_err();
+        let ret = block_on(engine.create_account(bob.id)).unwrap_err();
         assert_eq!(ret.0.as_u16(), 502);
         // assert_eq!(ret.1, "CREATED");
 

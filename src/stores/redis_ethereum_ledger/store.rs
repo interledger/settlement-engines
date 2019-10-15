@@ -17,6 +17,7 @@ use log::{error, trace};
 use crate::stores::redis_store_common::{EngineRedisStore, EngineRedisStoreBuilder};
 use crate::stores::{IdempotentEngineData, IdempotentEngineStore};
 use interledger_settlement::LeftoversStore;
+use serde::Serialize;
 
 // Key for the latest observed block and balance. The data is stored in order to
 // avoid double crediting transactions which have already been processed, and in
