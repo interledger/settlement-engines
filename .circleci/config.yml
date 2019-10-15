@@ -1,6 +1,41 @@
 version: 2
+
 jobs:
-  build:
+  style-and-audit:
+    docker:
+      - image: circleci/rust
+        environment:
+          CARGO_HOME: /home/circleci/.cargo
+    steps:
+      - checkout
+      - run:
+          name: Install Cargo Extensions
+          command: |
+            cargo install --quiet cargo-audit || true
+            rustup component add rustfmt clippy || true
+      - run:
+          name: Rust formatting
+          command: |
+            cargo fmt --all -- --check
+      - run:
+          name: Clippy linting
+          command: |
+            cargo clippy --all-targets --all-features -- -D warnings
+      - run:
+          name: Audit dependencies
+          command: cargo audit
+
+  coverage:
+      machine: true
+      steps:
+        - checkout
+        - run:
+            name: Coverage using docker
+            # should we be using this guy's docker image
+            command: docker run --security-opt seccomp=unconfined -v "${PWD}:/volume" xd009642/tarpaulin
+
+
+  build-test:
     docker:
       - image: circleci/rust
         environment:
@@ -8,24 +43,6 @@ jobs:
     resource_class: medium+
     steps:
       - checkout
-      - restore_cache:
-          keys:
-            - cargo-cache-1-{{ checksum "Cargo.toml" }}-{{ .Branch }}
-            - cargo-cache-1-{{ checksum "Cargo.toml" }}
-            - cargo-cache-1-
-      - run:
-          name: Install Cargo Extensions
-          command: |
-            # cargo-audit started requiring libcurl3
-            echo "deb http://security.ubuntu.com/ubuntu xenial-security main" | sudo tee -a /etc/apt/sources.list
-            sudo apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 3B4FE6ACC0B21F32
-            sudo apt-get update
-            sudo apt-get install libcurl3 -y
-            # get libcurl to a place where it won't get overwritten
-            sudo cp /usr/lib/x86_64-linux-gnu/libcurl.so.3 /usr/lib
-            sudo apt-get install curl -y
-            cargo install --quiet cargo-audit || true # cargo-kcov
-            rustup component add rustfmt clippy || true
       - run:
           name: Install Redis
           command: |
@@ -59,38 +76,11 @@ jobs:
             timeout 10m cargo test --all --all-features
           environment:
             RUST_BACKTRACE: "1"
-      - run:
-          name: Check Style
-          command: |
-            cargo fmt --all -- --check
-            cargo clippy --all-targets --all-features -- -D warnings
-      - run:
-          name: Audit Dependencies
-          command: LD_PRELOAD=/usr/lib/libcurl.so.3 cargo audit
-      # - run:
-      #     name: Install kcov
-      #     command: >-
-      #       kcov --version ||
-      #       (sudo apt-get install cmake g++ pkg-config jq libcurl4-openssl-dev libelf-dev libdw-dev binutils-dev libiberty-dev
-      #       && cargo kcov --print-install-kcov-sh | sh)
-      # - run:
-      #     name: Generate Coverage Report
-      #     # Enable sudo to avoid the error: "Can't set personality: Operation not permitted"
-      #     # See discussion in https://github.com/travis-ci/travis-ci/issues/9061
-      #     sudo: required
-      #     command:
-      #       cargo kcov --all --verbose
-      #       # -- --verify
-      #       # --exclude-region="kcov-ignore-start:kcov-ignore-end"
-      #       # --exclude-pattern="$CARGO_HOME,**/tests/**"
-      #       # --exclude-line="^(\)*\}*,*)$"
-      #     environment:
-      #       # Configure the redis tests to use a unix socket instead of TCP
-      #       REDISRS_SERVER_TYPE: unix
-      # - run:
-      #     name: Upload Code Coverage
-      #     command: "bash <(curl -s https://codecov.io/bash)"
-      - save_cache:
-          key: cargo-cache-1-{{ checksum "Cargo.toml" }}-{{ .Branch }}
-          paths:
-            - /home/circleci/.cargo
+
+workflows:
+  version: 2
+  build-test-check:
+    jobs:
+      - style-and-audit
+      - build-test
+      - coverage
