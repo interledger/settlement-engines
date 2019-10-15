@@ -6,6 +6,8 @@ use secp256k1::Message;
 use secp256k1::Secp256k1;
 use tiny_keccak::keccak256;
 
+use serde::{Deserialize, Serialize};
+
 /// Description of a Transaction, pending or in the chain.
 #[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 pub struct RawTransaction {
