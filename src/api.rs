@@ -1,3 +1,8 @@
+/// # Settlement Engine API
+///
+/// Tower_Web service which exposes settlement related endpoints as described in RFC536,
+/// See [forum discussion](https://forum.interledger.org/t/settlement-architecture/545) for more context.
+/// All endpoints are idempotent.
 use crate::stores::{IdempotentEngineData, IdempotentEngineStore};
 use crate::{ApiResponse, SettlementEngine};
 use bytes::{buf::FromBuf, Bytes};
@@ -9,15 +14,16 @@ use hyper::{Response, StatusCode};
 use interledger_settlement::Quantity;
 use log::error;
 use ring::digest::{digest, SHA256};
+use serde::{Deserialize, Serialize};
 use tokio::executor::spawn;
 
 use warp::{self, Filter};
 
-/// # Settlement Engine API
-///
-/// Tower_Web service which exposes settlement related endpoints as described in RFC536,
-/// See [forum discussion](https://forum.interledger.org/t/settlement-architecture/545) for more context.
-/// All endpoints are idempotent.
+#[derive(Serialize, Deserialize, Debug, Clone, Hash)]
+pub struct CreateAccount {
+    id: String,
+}
+
 pub fn create_settlement_engine_filter<E, S>(
     engine: E,
     store: S,
@@ -37,18 +43,16 @@ where
         .and(warp::path("accounts"))
         .and(warp::path::end())
         .and(idempotency)
-        .and(warp::body::concat())
+        .and(warp::body::json())
         .and(with_engine.clone())
         .and(with_store.clone())
         .and_then(
             move |idempotency_key: Option<String>,
-                  body: warp::body::FullBody,
+                  account_id: CreateAccount,
                   engine: E,
                   store: S| {
-                // TODO: Hacky way to get a string from the body, what's a better way?
-                let account_id = String::from_utf8_lossy(&Vec::from_buf(body)).to_string();
-                let input = format!("{}", account_id);
-                let input_hash = get_hash_of(input.as_ref());
+                let account_id = account_id.id;
+                let input_hash = get_hash_of(account_id.as_ref());
 
                 // Wrap do_send_outgoing_message in a closure to be invoked by
                 // the idempotency wrapper
@@ -237,7 +241,7 @@ where
         // otherwise just make the call without any idempotency saves
         Either::B(
             f().map_err(move |ret: (StatusCode, String)| ret)
-                .and_then(move |ret: (StatusCode, String)| Ok(ret)),
+                .and_then(Ok),
         )
     }
 }
@@ -357,7 +361,7 @@ mod tests {
                 .method("POST")
                 .path(&format!("/accounts/{}/settlements", id))
                 .body(json!(Quantity::new(amount, scale)).to_string())
-                .header("Idempotency-Key", IDEMPOTENCY.clone())
+                .header("Idempotency-Key", IDEMPOTENCY)
                 .reply(&api)
         };
 
@@ -414,7 +418,7 @@ mod tests {
                 .method("POST")
                 .path(&format!("/accounts/{}/messages", id))
                 .body(msg)
-                .header("Idempotency-Key", IDEMPOTENCY.clone())
+                .header("Idempotency-Key", IDEMPOTENCY)
                 .reply(&api)
         };
 
@@ -466,12 +470,12 @@ mod tests {
         let engine = TestEngine;
         let api = create_settlement_engine_filter(engine, store.clone());
 
-        let create_account_call = move |id| {
+        let create_account_call = move |id: &str| {
             warp::test::request()
                 .method("POST")
                 .path("/accounts")
-                .body(id)
-                .header("Idempotency-Key", IDEMPOTENCY.clone())
+                .body(json!(CreateAccount { id: id.to_string() }).to_string())
+                .header("Idempotency-Key", IDEMPOTENCY)
                 .reply(&api)
         };
 
