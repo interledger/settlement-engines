@@ -1,7 +1,7 @@
-use crate::stores::{IdempotentEngineData, IdempotentEngineStore};
 use bytes::Bytes;
 use futures::{future::result, Future};
 use http::StatusCode;
+use interledger_http::idempotency::{IdempotentData, IdempotentStore};
 use interledger_settlement::{scale_with_precision_loss, Convert, ConvertDetails, LeftoversStore};
 use num_bigint::BigUint;
 use redis::{
@@ -49,11 +49,11 @@ pub struct EngineRedisStore {
     pub connection: SharedConnection,
 }
 
-impl IdempotentEngineStore for EngineRedisStore {
+impl IdempotentStore for EngineRedisStore {
     fn load_idempotent_data(
         &self,
         idempotency_key: String,
-    ) -> Box<dyn Future<Item = Option<IdempotentEngineData>, Error = ()> + Send> {
+    ) -> Box<dyn Future<Item = Option<IdempotentData>, Error = ()> + Send> {
         let idempotency_key_clone = idempotency_key.clone();
         Box::new(
             cmd("HGETALL")
