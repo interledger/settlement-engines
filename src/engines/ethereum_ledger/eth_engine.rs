@@ -2,6 +2,7 @@ use super::types::{Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumS
 use super::utils::{filter_transfer_logs, make_tx, sent_to_us, ERC20Transfer};
 use super::EthAddress;
 use crate::create_settlement_engine_filter;
+use bytes::Bytes;
 use clarity::Signature;
 use log::{debug, error, trace};
 use parking_lot::RwLock;
@@ -9,7 +10,6 @@ use sha3::{Digest, Keccak256 as Sha3};
 use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::sync::Arc;
-use bytes::Bytes;
 
 use hyper::StatusCode;
 use log::info;
@@ -40,9 +40,9 @@ use web3::{
 
 use crate::stores::redis_ethereum_ledger::*;
 use crate::{ApiResponse, SettlementEngine};
+use interledger_http::error::*;
 use interledger_settlement::{scale_with_precision_loss, LeftoversStore, Quantity};
 use secrecy::Secret;
-use interledger_http::error::*;
 
 const MAX_RETRIES: usize = 10;
 const ETH_CREATE_ACCOUNT_PREFIX: &[u8] = b"ilp-ethl-create-account-message";
@@ -777,13 +777,17 @@ where
                                     payment_details.to
                                 );
                                 error!("{}", error_msg);
-                                return Either::A(err(ApiError::internal_server_error().detail(error_msg)))
+                                return Either::A(err(
+                                    ApiError::internal_server_error().detail(error_msg)
+                                ));
                             }
-                        },
+                        }
                         Err(error_msg) => {
                             let error_msg = format!("Could not recover address {:?}", error_msg);
                             error!("{}", error_msg);
-                            return Either::A(err(ApiError::internal_server_error().detail(error_msg)))
+                            return Either::A(err(
+                                ApiError::internal_server_error().detail(error_msg)
+                            ));
                         }
                     };
 
@@ -912,7 +916,9 @@ where
                             status: StatusCode::BAD_REQUEST,
                         };
                         error!("{}", error_msg);
-                        Either::B(err(ApiError::from_api_error_type(&err_type).detail(error_msg)))
+                        Either::B(err(
+                            ApiError::from_api_error_type(&err_type).detail(error_msg)
+                        ))
                     }
                 }
             } else {
@@ -930,7 +936,9 @@ where
                 title: "Invalid message type",
                 status: StatusCode::BAD_REQUEST,
             };
-            Box::new(err(ApiError::from_api_error_type(&err_type).detail(error_msg)))
+            Box::new(err(
+                ApiError::from_api_error_type(&err_type).detail(error_msg)
+            ))
         }
     }
 
@@ -953,7 +961,9 @@ where
             Err(_err) => {
                 let error_msg = format!("Error converting to BigUint {:?}", _err);
                 error!("{:?}", error_msg);
-                return Box::new(err(ApiError::from_api_error_type(&CONVERSION_ERROR_TYPE).detail(error_msg)))
+                return Box::new(err(
+                    ApiError::from_api_error_type(&CONVERSION_ERROR_TYPE).detail(error_msg)
+                ));
             }
         };
         let (amount, precision_loss) =
@@ -1173,7 +1183,7 @@ mod tests {
             false,
         );
 
-        // the signed message does not match. 
+        // the signed message does not match.
         // (We are not able to make Mockito capture the challenge and return a
         // signature on it.)
         let ret: ApiError = block_on(engine.create_account(bob.id)).unwrap_err();
