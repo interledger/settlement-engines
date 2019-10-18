@@ -15,7 +15,7 @@ use redis::{self, aio::SharedConnection, cmd, ConnectionInfo, PipelineCommands, 
 use log::{error, trace};
 
 use crate::stores::redis_store_common::{EngineRedisStore, EngineRedisStoreBuilder};
-use crate::stores::{IdempotentEngineData, IdempotentEngineStore};
+use interledger_http::idempotency::{IdempotentData, IdempotentStore};
 use interledger_settlement::LeftoversStore;
 use serde::Serialize;
 
@@ -138,11 +138,11 @@ impl LeftoversStore for EthereumLedgerRedisStore {
     }
 }
 
-impl IdempotentEngineStore for EthereumLedgerRedisStore {
+impl IdempotentStore for EthereumLedgerRedisStore {
     fn load_idempotent_data(
         &self,
         idempotency_key: String,
-    ) -> Box<dyn Future<Item = Option<IdempotentEngineData>, Error = ()> + Send> {
+    ) -> Box<dyn Future<Item = Option<IdempotentData>, Error = ()> + Send> {
         self.redis_store.load_idempotent_data(idempotency_key)
     }
 

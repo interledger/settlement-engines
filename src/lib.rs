@@ -17,10 +17,12 @@ pub mod engines;
 pub mod stores;
 pub use self::api::create_settlement_engine_filter;
 
+use bytes::Bytes;
 use http::StatusCode;
+use interledger_http::error::ApiError;
 use interledger_settlement::Quantity;
 
-pub type ApiResponse = (StatusCode, String);
+pub type ApiResponse = (StatusCode, Bytes);
 
 /// Trait consumed by the Settlement Engine HTTP API. Every settlement engine
 /// MUST implement this trait, so that it can be then be exposed over the API.
@@ -29,16 +31,16 @@ pub trait SettlementEngine {
         &self,
         account_id: String,
         money: Quantity,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiResponse> + Send>;
+    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send>;
 
     fn receive_message(
         &self,
         account_id: String,
         message: Vec<u8>,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiResponse> + Send>;
+    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send>;
 
     fn create_account(
         &self,
         account_id: String,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiResponse> + Send>;
+    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send>;
 }

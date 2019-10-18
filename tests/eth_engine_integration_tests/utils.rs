@@ -16,12 +16,12 @@ use web3::{
     types::{Address, H256, U256},
 };
 
+use interledger_http::idempotency::{IdempotentData, IdempotentStore};
 use interledger_settlement::{scale_with_precision_loss, Convert, ConvertDetails, LeftoversStore};
 use interledger_settlement_engines::engines::ethereum_ledger::{
     EthereumAccount, EthereumAddresses as Addresses, EthereumLedgerSettlementEngine,
     EthereumLedgerSettlementEngineBuilder, EthereumLedgerTxSigner, EthereumStore,
 };
-use interledger_settlement_engines::stores::{IdempotentEngineData, IdempotentEngineStore};
 use num_bigint::BigUint;
 
 #[derive(Debug, Clone)]
@@ -232,11 +232,11 @@ impl EthereumStore for TestStore {
     }
 }
 
-impl IdempotentEngineStore for TestStore {
+impl IdempotentStore for TestStore {
     fn load_idempotent_data(
         &self,
         idempotency_key: String,
-    ) -> Box<dyn Future<Item = Option<IdempotentEngineData>, Error = ()> + Send> {
+    ) -> Box<dyn Future<Item = Option<IdempotentData>, Error = ()> + Send> {
         let cache = self.cache.read();
         if let Some(data) = cache.get(&idempotency_key) {
             let mut guard = self.cache_hits.write();
@@ -328,7 +328,7 @@ where
     Si: EthereumLedgerTxSigner + Clone + Send + Sync + 'static,
     S: EthereumStore<Account = A>
         + LeftoversStore<AccountId = String, AssetType = BigUint>
-        + IdempotentEngineStore
+        + IdempotentStore
         + Clone
         + Send
         + Sync
