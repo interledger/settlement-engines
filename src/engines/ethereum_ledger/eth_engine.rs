@@ -9,6 +9,7 @@ use sha3::{Digest, Keccak256 as Sha3};
 use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::sync::Arc;
+use bytes::Bytes;
 
 use hyper::StatusCode;
 use log::info;
@@ -41,6 +42,7 @@ use crate::stores::redis_ethereum_ledger::*;
 use crate::{ApiResponse, SettlementEngine};
 use interledger_settlement::{scale_with_precision_loss, LeftoversStore, Quantity};
 use secrecy::Secret;
+use interledger_http::error::*;
 
 const MAX_RETRIES: usize = 10;
 const ETH_CREATE_ACCOUNT_PREFIX: &[u8] = b"ilp-ethl-create-account-message";
@@ -711,7 +713,7 @@ where
     fn create_account(
         &self,
         account_id: String,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiResponse> + Send> {
+    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
         let self_clone = self.clone();
         let store: S = self.store.clone();
         let signer = self.signer.clone();
@@ -756,7 +758,7 @@ where
             .map_err(move |err| {
                 let err = format!("Couldn't notify connector {:?}", err);
                 error!("{}", err);
-                (StatusCode::from_u16(500).unwrap(), err)
+                ApiError::internal_server_error().detail(err)
             })
             .and_then(move |resp| {
                 parse_body_into_payment_details(resp).and_then(move |payment_details| {
@@ -775,16 +777,13 @@ where
                                     payment_details.to
                                 );
                                 error!("{}", error_msg);
-                                return Either::A(err((
-                                    StatusCode::from_u16(502).unwrap(),
-                                    error_msg,
-                                )));
+                                return Either::A(err(ApiError::internal_server_error().detail(error_msg)))
                             }
-                        }
+                        },
                         Err(error_msg) => {
                             let error_msg = format!("Could not recover address {:?}", error_msg);
                             error!("{}", error_msg);
-                            return Either::A(err((StatusCode::from_u16(400).unwrap(), error_msg)));
+                            return Either::A(err(ApiError::internal_server_error().detail(error_msg)))
                         }
                     };
 
@@ -828,12 +827,17 @@ where
                         store
                             .save_account_addresses(data)
                             .map_err(move |err| {
+                                let err_type = ApiErrorType {
+                                    r#type: &ProblemType::Default,
+                                    title: "Store connection error",
+                                    status: StatusCode::BAD_REQUEST,
+                                };
                                 let err = format!("Couldn't connect to store {:?}", err);
                                 error!("{}", err);
-                                (StatusCode::from_u16(500).unwrap(), err)
+                                ApiError::from_api_error_type(&err_type).detail(err)
                             })
                             .and_then(move |_| {
-                                Ok((StatusCode::from_u16(201).unwrap(), "CREATED".to_owned()))
+                                Ok((StatusCode::from_u16(201).unwrap(), Bytes::from("CREATED")))
                             }),
                     )
                 })
@@ -849,7 +853,7 @@ where
         &self,
         account_id: String,
         body: Vec<u8>,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiResponse> + Send> {
+    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
         let address = self.address;
         let store = self.store.clone();
         // We are only returning our information, so
@@ -871,9 +875,9 @@ where
                 (*guard).insert(account_id, challenge.clone());
                 // Respond with our address, a signature, and our own challenge
                 let ret = PaymentDetailsResponse::new(address, signature, Some(challenge));
-                serde_json::to_string(&ret).unwrap()
+                serde_json::to_vec(&ret).unwrap()
             };
-            Box::new(ok((StatusCode::from_u16(200).unwrap(), resp)))
+            Box::new(ok((StatusCode::from_u16(200).unwrap(), resp.into())))
         } else if let Ok(resp) = serde_json::from_slice::<PaymentDetailsResponse>(&body) {
             debug!("Received payment details: {:?}", resp);
             let guard = self.challenges.read();
@@ -893,17 +897,22 @@ where
                                 // save to the store
                                 let data = HashMap::from_iter(vec![(account_id, resp.to)]);
                                 Either::B(store.save_account_addresses(data).map_err(move |err| {
-                                    let err = format!("Couldn't connect to store {:?}", err);
-                                    error!("{}", err);
-                                    (StatusCode::from_u16(500).unwrap(), err)
+                                    let error_msg = format!("Couldn't connect to store {:?}", err);
+                                    error!("{}", error_msg);
+                                    ApiError::internal_server_error().detail(error_msg)
                                 }))
                             },
                         )
                     }
                     Err(error_msg) => {
                         let error_msg = format!("Could not recover address {:?}", error_msg);
+                        let err_type = ApiErrorType {
+                            r#type: &ProblemType::Default,
+                            title: "Signature verification failure",
+                            status: StatusCode::BAD_REQUEST,
+                        };
                         error!("{}", error_msg);
-                        Either::B(err((StatusCode::from_u16(400).unwrap(), error_msg)))
+                        Either::B(err(ApiError::from_api_error_type(&err_type).detail(error_msg)))
                     }
                 }
             } else {
@@ -911,16 +920,20 @@ where
             };
 
             Box::new(
-                fut.and_then(move |_| Ok((StatusCode::from_u16(200).unwrap(), "OK".to_string()))),
+                fut.and_then(move |_| Ok((StatusCode::from_u16(200).unwrap(), Bytes::from("OK")))),
             )
         } else {
-            error!("Ignoring message that was neither a PaymentDetailsRequest nor a PaymentDetailsResponse");
-            Box::new(err((
-                StatusCode::from_u16(400).unwrap(),
-                "Invalid message type".to_owned(),
-            )))
+            let error_msg = "Ignoring message that was neither a PaymentDetailsRequest nor a PaymentDetailsResponse";
+            error!("{}", error_msg);
+            let err_type = ApiErrorType {
+                r#type: &ProblemType::Default,
+                title: "Invalid message type",
+                status: StatusCode::BAD_REQUEST,
+            };
+            Box::new(err(ApiError::from_api_error_type(&err_type).detail(error_msg)))
         }
     }
+
     /// Settlement Engine's function that corresponds to the
     /// /accounts/:id/settlements endpoint (POST). It performs an Ethereum
     /// onchain transaction to the Ethereum Address that corresponds to the
@@ -930,7 +943,7 @@ where
         &self,
         account_id: String,
         body: Quantity,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiResponse> + Send> {
+    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
         let self_clone = self.clone();
         let store = self.store.clone();
         let engine_scale = self.asset_scale;
@@ -940,7 +953,7 @@ where
             Err(_err) => {
                 let error_msg = format!("Error converting to BigUint {:?}", _err);
                 error!("{:?}", error_msg);
-                return Box::new(err((StatusCode::from_u16(400).unwrap(), error_msg)));
+                return Box::new(err(ApiError::from_api_error_type(&CONVERSION_ERROR_TYPE).detail(error_msg)))
             }
         };
         let (amount, precision_loss) =
@@ -952,12 +965,12 @@ where
                 .map_err(move |err| {
                     let error_msg = format!("Error loading leftovers {:?}", err);
                     error!("{}", error_msg);
-                    (StatusCode::from_u16(400).unwrap(), error_msg)
+                    ApiError::internal_server_error().detail(error_msg)
                 })
                 .join(self_clone.load_account(account_id).map_err(move |err| {
                     let error_msg = format!("Error loading account {:?}", err);
                     error!("{}", error_msg);
-                    (StatusCode::from_u16(400).unwrap(), error_msg)
+                    ApiError::internal_server_error().detail(error_msg)
                 }))
                 .and_then(
                     move |(uncredited_settlement_amount, (account_id, addresses))| {
@@ -980,7 +993,7 @@ where
                             Err(_err) => {
                                 let error_msg = format!("Error converting to U256 {:?}", _err);
                                 error!("{:?}", error_msg);
-                                return Either::A(err((StatusCode::from_u16(400).unwrap(), error_msg)));
+                                return Either::A(err(ApiError::from_api_error_type(&CONVERSION_ERROR_TYPE).detail(error_msg)))
                             }
                         };
 
@@ -991,24 +1004,29 @@ where
                         .map_err(move |_| {
                             let error_msg = "Error connecting to the blockchain.".to_string();
                             error!("{}", error_msg);
-                            (StatusCode::from_u16(502).unwrap(), error_msg)
+                            let err_type = ApiErrorType {
+                                r#type: &ProblemType::Default,
+                                title: "Blockchain connection error",
+                                status: StatusCode::BAD_GATEWAY,
+                            };
+                            ApiError::from_api_error_type(&err_type).detail(error_msg)
                         }))
                     },
                 )
-                .and_then(move |_| Ok((StatusCode::OK, "OK".to_string()))),
+                .and_then(move |_| Ok((StatusCode::OK, Bytes::from("OK")))),
         )
     }
 }
 
 fn parse_body_into_payment_details(
     resp: HttpResponse,
-) -> impl Future<Item = PaymentDetailsResponse, Error = ApiResponse> {
+) -> impl Future<Item = PaymentDetailsResponse, Error = ApiError> {
     resp.into_body()
         .concat2()
         .map_err(|err| {
             let err = format!("Couldn't retrieve body {:?}", err);
             error!("{}", err);
-            (StatusCode::from_u16(500).unwrap(), err)
+            ApiError::internal_server_error().detail(err)
         })
         .and_then(move |body| {
             serde_json::from_slice::<PaymentDetailsResponse>(&body).map_err(|err| {
@@ -1017,7 +1035,7 @@ fn parse_body_into_payment_details(
                     body, err
                 );
                 error!("{}", err);
-                (StatusCode::from_u16(500).unwrap(), err)
+                ApiError::internal_server_error().detail(err)
             })
         })
 }
@@ -1155,11 +1173,14 @@ mod tests {
             false,
         );
 
-        // the signed message does not match. We are not able to make Mockito
-        // capture the challenge and return a signature on it.
-        let ret = block_on(engine.create_account(bob.id)).unwrap_err();
-        assert_eq!(ret.0.as_u16(), 502);
-        // assert_eq!(ret.1, "CREATED");
+        // the signed message does not match. 
+        // (We are not able to make Mockito capture the challenge and return a
+        // signature on it.)
+        let ret: ApiError = block_on(engine.create_account(bob.id)).unwrap_err();
+        assert_eq!(ret.status.as_u16(), 500);
+        let error_msg = ret.detail.unwrap();
+        assert!(error_msg.starts_with("Recovered address did not match:"));
+        assert!(error_msg.ends_with("Expected Addresses { own_address: 0x9b925641c5ef3fd86f63bff2da55a0deeafd1263, token_address: None }"));
 
         m.assert();
     }
@@ -1192,7 +1213,7 @@ mod tests {
             own_address: ALICE.address,
             token_address: None,
         };
-        let data: PaymentDetailsResponse = serde_json::from_str(&ret.1).unwrap();
+        let data: PaymentDetailsResponse = serde_json::from_slice(&ret.1).unwrap();
         // The returned addresses must be Alice's
         assert_eq!(data.to, alice_addrs);
         // The returned signature must be Alice's sig.
@@ -1213,7 +1234,7 @@ mod tests {
             serde_json::to_vec(&PaymentDetailsResponse::new(bob_addrs, signature, None)).unwrap();
         let ret = block_on(engine.receive_message(bob.id.to_string(), c)).unwrap();
         assert_eq!(ret.0.as_u16(), 200);
-        assert_eq!(ret.1, "OK".to_owned());
+        assert_eq!(ret.1, Bytes::from("OK".to_owned()));
 
         // check that alice's store got updated with bob's addresses
         let addrs = store
