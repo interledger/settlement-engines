@@ -536,7 +536,12 @@ where
             .push("accounts")
             .push(&account_id.clone())
             .push("settlements");
-        debug!("Making POST to {:?} {:?} about {:?}", url, amount, tx_hash);
+        debug!(
+            "Making POST to {:?} {:?} about {:?}",
+            url,
+            amount,
+            format!("{:?}", tx_hash)
+        );
 
         let account_id_clone = account_id.clone();
         let amount_clone = amount.clone();
@@ -546,7 +551,7 @@ where
             let amount = amount.clone();
             client
                 .post(url.as_ref())
-                .header("Idempotency-Key", tx_hash.to_string())
+                .header("Idempotency-Key", format!("{:?}", tx_hash))
                 .json(&json!(Quantity::new(amount.clone(), engine_scale)))
                 .send()
                 .map_err(move |err| {
