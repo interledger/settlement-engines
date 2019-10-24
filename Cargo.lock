@@ -993,14 +993,14 @@ dependencies = [
 [[package]]
 name = "interledger-http"
 version = "0.2.2-beta.3"
-source = "git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp#8e979adf9f0b9101307867f9f77b7c69afdf61ac"
+source = "git+https://github.com/interledger-rs/interledger-rs#bf9e50eaf2299995b52d1246a18fd263bef6ab67"
 dependencies = [
  "bytes 0.4.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "chrono 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "http 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
- "interledger-packet 0.2.2-beta.5 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)",
- "interledger-service 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)",
+ "interledger-packet 0.2.2-beta.5 (git+https://github.com/interledger-rs/interledger-rs)",
+ "interledger-service 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 1.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1044,7 +1044,7 @@ dependencies = [
 [[package]]
 name = "interledger-packet"
 version = "0.2.2-beta.5"
-source = "git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp#8e979adf9f0b9101307867f9f77b7c69afdf61ac"
+source = "git+https://github.com/interledger-rs/interledger-rs#bf9e50eaf2299995b52d1246a18fd263bef6ab67"
 dependencies = [
  "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.12 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1086,11 +1086,11 @@ dependencies = [
 [[package]]
 name = "interledger-service"
 version = "0.2.2-beta.3"
-source = "git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp#8e979adf9f0b9101307867f9f77b7c69afdf61ac"
+source = "git+https://github.com/interledger-rs/interledger-rs#bf9e50eaf2299995b52d1246a18fd263bef6ab67"
 dependencies = [
  "base64 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
- "interledger-packet 0.2.2-beta.5 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)",
+ "interledger-packet 0.2.2-beta.5 (git+https://github.com/interledger-rs/interledger-rs)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 1.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.101 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1152,14 +1152,14 @@ dependencies = [
 [[package]]
 name = "interledger-settlement"
 version = "0.1.1-beta.3"
-source = "git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp#8e979adf9f0b9101307867f9f77b7c69afdf61ac"
+source = "git+https://github.com/interledger-rs/interledger-rs#bf9e50eaf2299995b52d1246a18fd263bef6ab67"
 dependencies = [
  "bytes 0.4.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.12.35 (registry+https://github.com/rust-lang/crates.io-index)",
- "interledger-http 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)",
- "interledger-packet 0.2.2-beta.5 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)",
- "interledger-service 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)",
+ "interledger-http 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs)",
+ "interledger-packet 0.2.2-beta.5 (git+https://github.com/interledger-rs/interledger-rs)",
+ "interledger-service 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-bigint 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1192,11 +1192,11 @@ dependencies = [
  "hyper 0.12.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "ilp-node 0.4.1-beta.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "interledger 0.4.1-beta.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "interledger-http 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)",
+ "interledger-http 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs)",
  "interledger-ildcp 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "interledger-service 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "interledger-service-util 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "interledger-settlement 0.1.1-beta.3 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)",
+ "interledger-settlement 0.1.1-beta.3 (git+https://github.com/interledger-rs/interledger-rs)",
  "json 0.11.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.62 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3493,16 +3493,16 @@ dependencies = [
 "checksum interledger-btp 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "1604b329427613f362c9597506b99383f482d1da9e52b7ff8c8d2d78ecf5db3d"
 "checksum interledger-ccp 0.1.1-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "78a9b9e128c4006ad23b2be60419770d7f8fcb111f89cbd0b0ffa6032703ec81"
 "checksum interledger-http 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "b0e8986bd80ad8a5b2d646264dc30dff0cc256d30764a33be7ff5f4b1f7387f4"
-"checksum interledger-http 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)" = "<none>"
+"checksum interledger-http 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs)" = "<none>"
 "checksum interledger-ildcp 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "53378a96ebd7e9480502cf040909493836ccfaaf0f305bcb5315eb748eb7301d"
 "checksum interledger-packet 0.2.2-beta.4 (registry+https://github.com/rust-lang/crates.io-index)" = "eff8fadaaec2f779e76bf3db58c5121a41ba1e343d7316b5f5df7c26acafe0f0"
-"checksum interledger-packet 0.2.2-beta.5 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)" = "<none>"
+"checksum interledger-packet 0.2.2-beta.5 (git+https://github.com/interledger-rs/interledger-rs)" = "<none>"
 "checksum interledger-router 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7064b1900086096194579bb0c8829dfb55e0a9aae66301dc45093629db519411"
 "checksum interledger-service 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "36d550ce18be9bd272cccadf69a35c21a7f3c7394da108d27411a5525885295f"
-"checksum interledger-service 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)" = "<none>"
+"checksum interledger-service 0.2.2-beta.3 (git+https://github.com/interledger-rs/interledger-rs)" = "<none>"
 "checksum interledger-service-util 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "576dd2813ed9fbd9811b974df4011540f3fe3ba8703b4d9f99825d8947bc531a"
 "checksum interledger-settlement 0.1.1-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "a6a1a4897682b87e0fe591d38a3e9311a2df22edcdb44eb05af0da7cdb882c6d"
-"checksum interledger-settlement 0.1.1-beta.3 (git+https://github.com/interledger-rs/interledger-rs?branch=gakonst/settlement-warp)" = "<none>"
+"checksum interledger-settlement 0.1.1-beta.3 (git+https://github.com/interledger-rs/interledger-rs)" = "<none>"
 "checksum interledger-spsp 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "5adce0640b9845362a598475d1f6f5febaca931a447cf12721e9068d0c2d5a8e"
 "checksum interledger-store-redis 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "85bfd82ab64a3c61c7fa6cd6b8757de5bf43a740e894f91fb882a6fd70133940"
 "checksum interledger-stream 0.2.2-beta.2 (registry+https://github.com/rust-lang/crates.io-index)" = "eb29fc4cfaf4950334fc9c742e1b2ba7580ab653e5a217c5569d91f40e9522eb"

@@ -179,7 +179,7 @@ mod tests {
     #[derive(Clone)]
     pub struct TestStore {
         #[allow(clippy::all)]
-        pub cache: Arc<RwLock<HashMap<String, (StatusCode, String, [u8; 32])>>>,
+        pub cache: Arc<RwLock<HashMap<String, IdempotentData>>>,
         pub cache_hits: Arc<RwLock<u64>>,
     }
 
@@ -199,7 +199,7 @@ mod tests {
             if let Some(data) = cache.get(&idempotency_key) {
                 let mut guard = self.cache_hits.write();
                 *guard += 1; // used to test how many times this branch gets executed
-                Box::new(ok(Some((data.0, Bytes::from(data.1.clone()), data.2))))
+                Box::new(ok(Some(data.clone())))
             } else {
                 Box::new(ok(None))
             }
@@ -215,11 +215,7 @@ mod tests {
             let mut cache = self.cache.write();
             cache.insert(
                 idempotency_key,
-                (
-                    status_code,
-                    String::from_utf8_lossy(&data).to_string(),
-                    input_hash,
-                ),
+                IdempotentData::new(status_code, data, input_hash),
             );
             Box::new(ok(()))
         }
@@ -299,8 +295,8 @@ mod tests {
 
         let cache_hits = store.cache_hits.read();
         assert_eq!(*cache_hits, 4);
-        assert_eq!(cached_data.0, 200);
-        assert_eq!(cached_data.1, "OK".to_string());
+        assert_eq!(cached_data.status, 200);
+        assert_eq!(cached_data.body, "OK".to_string());
     }
 
     #[test]
@@ -344,8 +340,8 @@ mod tests {
 
         let cache_hits = store.cache_hits.read();
         assert_eq!(*cache_hits, 4);
-        assert_eq!(cached_data.0, 200);
-        assert_eq!(cached_data.1, "RECEIVED".to_string());
+        assert_eq!(cached_data.status, 200);
+        assert_eq!(cached_data.body, "RECEIVED".to_string());
     }
 
     #[test]
@@ -381,7 +377,7 @@ mod tests {
 
         let cache_hits = store.cache_hits.read();
         assert_eq!(*cache_hits, 2);
-        assert_eq!(cached_data.0, 201);
-        assert_eq!(cached_data.1, "CREATED".to_string());
+        assert_eq!(cached_data.status, 201);
+        assert_eq!(cached_data.body, "CREATED".to_string());
     }
 }
