@@ -14,7 +14,7 @@ tokio = { version = "0.1.21", default-features = false }
 hyper = { version = "0.12.31", default-features = false }
 futures = { version = "0.1.25", default-features = false }
 interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master", default-features = false }
-interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
+interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master", default-features = false }
 ethabi = { version = "8.0.1", default-features = false }
 serde = { version = "1.0.99", default-features = false }
 serde_json = { version = "1.0.40", default-features = false }
