@@ -7,8 +7,6 @@ license = "Apache-2.0"
 edition = "2018"
 
 [dependencies]
-warp = { version = "0.1.20", default-features = false }
-tower-web = { version = "0.3.7", default-features = false }
 hex = { version = "0.3.2", default-features = false }
 web3 = { version = "0.8.0", default-features = false }
 log = { version = "0.4.6", default-features = false }
@@ -42,6 +40,7 @@ tiny-keccak= { version = "1.4.2", default-features = false, optional = true }
 secp256k1 = { version = "0.15.5", default-features = false, optional = true }
 rlp = { version = "0.4.2", default-features = false, optional = true }
 ethereum-types = { version = "0.6.0", default-features = false, optional = true }
+warp = { version = "0.1.20", default-features = false }
 
 
 [dev-dependencies]
