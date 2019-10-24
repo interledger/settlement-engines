@@ -41,7 +41,9 @@ use web3::{
 use crate::stores::redis_ethereum_ledger::*;
 use crate::{ApiResponse, SettlementEngine};
 use interledger_http::error::*;
-use interledger_settlement::{scale_with_precision_loss, LeftoversStore, Quantity};
+use interledger_settlement::{
+    scale_with_precision_loss, LeftoversStore, Quantity, CONVERSION_ERROR_TYPE,
+};
 use secrecy::Secret;
 
 const MAX_RETRIES: usize = 10;

@@ -14,8 +14,8 @@ tokio = "0.1.21"
 hyper = "0.12.31"
 futures = "0.1.25"
 interledger-service = "^0.2.2-alpha.1"
-interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/settlement-warp" }
-interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/settlement-warp" }
+interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
+interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
 interledger-service-util = "^0.2.2-alpha.1"
 interledger-ildcp = "^0.2.2-alpha.1"
 ethabi = "8.0.1"

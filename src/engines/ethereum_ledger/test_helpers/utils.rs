@@ -54,7 +54,7 @@ pub struct TestStore {
     pub addresses: Arc<RwLock<HashMap<String, Addresses>>>,
     pub address_to_id: Arc<RwLock<HashMap<Addresses, String>>>,
     #[allow(clippy::all)]
-    pub cache: Arc<RwLock<HashMap<String, (StatusCode, String, [u8; 32])>>>,
+    pub cache: Arc<RwLock<HashMap<String, IdempotentData>>>,
     pub last_observed_block: Arc<RwLock<U256>>,
     pub saved_hashes: Arc<RwLock<HashMap<H256, bool>>>,
     pub cache_hits: Arc<RwLock<u64>>,
@@ -239,7 +239,7 @@ impl IdempotentStore for TestStore {
         if let Some(data) = cache.get(&idempotency_key) {
             let mut guard = self.cache_hits.write();
             *guard += 1; // used to test how many times this branch gets executed
-            Box::new(ok(Some((data.0, Bytes::from(data.1.clone()), data.2))))
+            Box::new(ok(Some(data.clone())))
         } else {
             Box::new(ok(None))
         }
@@ -255,11 +255,7 @@ impl IdempotentStore for TestStore {
         let mut cache = self.cache.write();
         cache.insert(
             idempotency_key,
-            (
-                status_code,
-                String::from_utf8_lossy(&data).to_string(),
-                input_hash,
-            ),
+            IdempotentData::new(status_code, data, input_hash),
         );
         Box::new(ok(()))
     }
