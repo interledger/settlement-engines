@@ -10,6 +10,8 @@ use web3::{
     types::{Address, BlockNumber, FilterBuilder, Transaction, H160, H256, U256},
 };
 
+pub use web3::types::Address as EthAddress;
+
 lazy_static! {
     /// This is the result of keccak256("Transfer(address,address,to)"), which is
     /// used to filter through Ethereum ERC20 Transfer events in transaction receipts.

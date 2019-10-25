@@ -12,9 +12,13 @@ use tokio::runtime::Builder as RuntimeBuilder;
 mod test_helpers;
 use test_helpers::{
     accounts_to_ids, create_account_on_engine, get_all_accounts, get_balance, random_secret,
-    redis_helpers::*, send_money_to_username, start_xrp_engine,
+    send_money_to_username, start_xrp_engine,
 };
 
+#[cfg(feature = "redis")]
+use test_helpers::redis_helpers::*;
+
+#[cfg(feature = "redis")]
 #[test]
 /// In this test we have Alice and Bob who have peered with each other and run
 /// XRP ledger settlement engines. Alice proceeds to make SPSP payments to

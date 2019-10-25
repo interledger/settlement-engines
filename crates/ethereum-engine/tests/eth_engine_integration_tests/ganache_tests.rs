@@ -1,23 +1,17 @@
+use super::utils::*;
+use lazy_static::lazy_static;
 use mockito;
+use num_bigint::BigUint;
+use secrecy::Secret;
 use serde_json::json;
 use std::collections::HashMap;
+use std::iter::FromIterator;
 use std::time::Duration;
 use web3::contract::{Contract, Options};
 use web3::{api::Web3, futures::future::Future, transports::Http, types::U256};
 
-use super::utils::*;
-use interledger_settlement::LeftoversStore;
-use interledger_settlement::Quantity;
-use num_bigint::BigUint;
-use std::iter::FromIterator;
-
-use interledger_settlement_engines::{
-    engines::ethereum_ledger::{EthereumAddresses as Addresses, EthereumStore},
-    SettlementEngine,
-};
-
-use lazy_static::lazy_static;
-use secrecy::Secret;
+use ethereum_engine::utils::types::{Addresses, EthereumStore};
+use interledger_settlement::settlement_core::types::{LeftoversStore, Quantity, SettlementEngine};
 
 lazy_static! {
     pub static ref ALICE_PK: Secret<String> = Secret::new(String::from(

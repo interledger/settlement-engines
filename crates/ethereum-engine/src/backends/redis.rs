@@ -8,16 +8,20 @@ use http::StatusCode;
 use std::collections::HashMap;
 use web3::types::{Address as EthAddress, H256, U256};
 
-use crate::engines::ethereum_ledger::{EthereumAccount, EthereumAddresses, EthereumStore};
+use crate::utils::types::{Addresses as EthereumAddresses, EthereumAccount, EthereumStore};
 use num_bigint::BigUint;
-use redis::{self, aio::SharedConnection, cmd, ConnectionInfo, PipelineCommands, Value};
+use redis_crate::{
+    self as redis, aio::SharedConnection, cmd, ConnectionInfo, PipelineCommands, Value,
+};
 
 use log::{error, trace};
-
-use crate::stores::redis_store_common::{EngineRedisStore, EngineRedisStoreBuilder};
-use interledger_http::idempotency::{IdempotentData, IdempotentStore};
-use interledger_settlement::LeftoversStore;
 use serde::Serialize;
+
+use interledger_settlement::settlement_core::{
+    backends_common::redis::{EngineRedisStore, EngineRedisStoreBuilder},
+    idempotency::{IdempotentData, IdempotentStore},
+    types::LeftoversStore,
+};
 
 // Key for the latest observed block and balance. The data is stored in order to
 // avoid double crediting transactions which have already been processed, and in
@@ -98,6 +102,7 @@ pub struct EthereumLedgerRedisStore {
 }
 
 impl EthereumLedgerRedisStore {
+    #[allow(unused)]
     pub fn new(redis_store: EngineRedisStore) -> Self {
         let connection = redis_store.connection.clone();
         EthereumLedgerRedisStore {
@@ -342,12 +347,18 @@ fn addrs_to_key(address: EthereumAddresses) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::test_helpers::store_helpers::{
-        block_on, test_eth_store as test_store,
-    };
+    use super::super::test_helpers::TestContext;
     use super::*;
+    use crate::utils::test_helpers::block_on;
     use std::iter::FromIterator;
     use std::str::FromStr;
+
+    fn test_store() -> impl Future<Item = (EthereumLedgerRedisStore, TestContext), Error = ()> {
+        let context = TestContext::new();
+        EngineRedisStoreBuilder::new(context.get_client_connection_info())
+            .connect()
+            .and_then(|redis_store| Ok((EthereumLedgerRedisStore::new(redis_store), context)))
+    }
 
     #[test]
     fn saves_and_loads_ethereum_addreses_properly() {
