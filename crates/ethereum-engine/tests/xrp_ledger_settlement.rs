@@ -2,7 +2,7 @@
 
 use futures::future::join_all;
 use futures::Future;
-use ilp_node::{random_secret, InterledgerNode};
+use ilp_node::InterledgerNode;
 use interledger::{api::AccountDetails, packet::Address, service::Username};
 use secrecy::SecretString;
 use std::str::FromStr;
@@ -10,10 +10,14 @@ use tokio::runtime::Builder as RuntimeBuilder;
 
 mod test_helpers;
 use test_helpers::{
-    accounts_to_ids, create_account_on_engine, get_all_accounts, get_balance, redis_helpers::*,
+    random_secret, accounts_to_ids, create_account_on_engine, get_all_accounts, get_balance,
     send_money_to_username, start_xrp_engine,
 };
 
+#[cfg(feature = "redis")]
+use test_helpers::redis_helpers::*;
+
+#[cfg(feature = "redis")]
 #[test]
 /// In this test we have Alice and Bob who have peered with each other and run
 /// XRP ledger settlement engines. Alice proceeds to make SPSP payments to
@@ -59,6 +63,7 @@ fn xrp_ledger_settlement() {
 
     let node1_secret = random_secret();
     let node1 = InterledgerNode {
+        prometheus: None,
         ilp_address: Some(Address::from_str("example.alice").unwrap()),
         default_spsp_account: None,
         admin_auth_token: "hi_alice".to_string(),
@@ -124,6 +129,7 @@ fn xrp_ledger_settlement() {
 
     let node2_secret = random_secret();
     let node2 = InterledgerNode {
+        prometheus: None,
         ilp_address: Some(Address::from_str("example.bob").unwrap()),
         default_spsp_account: None,
         admin_auth_token: "admin".to_string(),

@@ -3,7 +3,7 @@
 
 use env_logger;
 use futures::{future::join_all, Future};
-use ilp_node::{random_secret, InterledgerNode};
+use ilp_node::InterledgerNode;
 use interledger::{api::AccountSettings, packet::Address, service::Username};
 use serde_json::json;
 use std::net::SocketAddr;
@@ -12,14 +12,14 @@ use tokio::runtime::Builder as RuntimeBuilder;
 
 mod test_helpers;
 use test_helpers::{
-    accounts_to_ids, create_account_on_node, get_all_accounts, get_balance, redis_helpers::*,
+    random_secret, accounts_to_ids, create_account_on_node, get_all_accounts, get_balance,
     send_money_to_username, set_node_settlement_engines, start_ganache, start_xrp_engine,
 };
 
-#[cfg(feature = "ethereum")]
-use test_helpers::start_eth_engine;
+#[cfg(feature = "redis")]
+use test_helpers::{start_eth_engine, redis_helpers::*};
 
-#[cfg(feature = "ethereum")]
+#[cfg(feature = "redis")]
 #[test]
 fn eth_xrp_interoperable() {
     // Nodes 1 and 2 are peers, Node 2 is the parent of Node 3
@@ -92,6 +92,7 @@ fn eth_xrp_interoperable() {
         .unwrap();
 
     let node1 = InterledgerNode {
+        prometheus: None,
         ilp_address: Some(Address::from_str("example.alice").unwrap()),
         default_spsp_account: None,
         admin_auth_token: "admin".to_string(),
@@ -139,6 +140,7 @@ fn eth_xrp_interoperable() {
     );
 
     let node2 = InterledgerNode {
+        prometheus: None,
         ilp_address: Some(Address::from_str("example.bob").unwrap()),
         default_spsp_account: None,
         admin_auth_token: "admin".to_string(),
@@ -221,6 +223,7 @@ fn eth_xrp_interoperable() {
         .and_then(move |_| create_account_on_node(node3_http, charlie_on_charlie, "admin"));
 
     let node3 = InterledgerNode {
+        prometheus: None,
         ilp_address: None,
         default_spsp_account: None,
         admin_auth_token: "admin".to_string(),

@@ -1,7 +1,8 @@
-use super::types::{Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore};
-use super::utils::{filter_transfer_logs, make_tx, sent_to_us, ERC20Transfer};
-use super::EthAddress;
-use crate::create_settlement_engine_filter;
+use super::utils::{
+    types::{Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore},
+    web3::{filter_transfer_logs, make_tx, sent_to_us, ERC20Transfer, EthAddress},
+};
+
 use bytes::Bytes;
 use clarity::Signature;
 use log::{debug, error, trace};
@@ -14,8 +15,6 @@ use std::sync::Arc;
 use hyper::StatusCode;
 use log::info;
 use num_bigint::BigUint;
-use redis::ConnectionInfo;
-use redis::IntoConnectionInfo;
 use reqwest::r#async::{Client, Response as HttpResponse};
 use serde::{de::Error as DeserializeError, Deserialize, Deserializer, Serialize};
 use serde_json::json;
@@ -38,11 +37,13 @@ use web3::{
     types::{Address, BlockNumber, CallRequest, TransactionId, H256, U256},
 };
 
-use crate::stores::redis_ethereum_ledger::*;
-use crate::{ApiResponse, SettlementEngine};
 use interledger_http::error::*;
-use interledger_settlement::{scale_with_precision_loss, LeftoversStore, Quantity};
 use secrecy::Secret;
+use settlement_core::{
+    api::create_settlement_engine_filter,
+    scale_with_precision_loss,
+    types::{ApiResponse, LeftoversStore, Quantity, SettlementEngine, CONVERSION_ERROR_TYPE},
+};
 
 const MAX_RETRIES: usize = 10;
 const ETH_CREATE_ACCOUNT_PREFIX: &[u8] = b"ilp-ethl-create-account-message";
@@ -1061,8 +1062,18 @@ fn prefixed_message(challenge: Vec<u8>) -> Vec<u8> {
     ret
 }
 
+// Redis helpers to run binaries
+
+#[cfg(feature = "redis")]
+use crate::backends::redis::*;
+#[cfg(feature = "redis")]
+use redis_crate::ConnectionInfo;
+#[cfg(feature = "redis")]
+use redis_crate::IntoConnectionInfo;
+
 #[doc(hidden)]
 #[allow(clippy::all)]
+#[cfg(feature = "redis")]
 pub fn run_ethereum_engine(opt: EthereumLedgerOpt) -> impl Future<Item = (), Error = ()> {
     // TODO make key compatible with
     // https://github.com/tendermint/signatory to have HSM sigs
@@ -1096,6 +1107,7 @@ pub fn run_ethereum_engine(opt: EthereumLedgerOpt) -> impl Future<Item = (), Err
         })
 }
 
+#[cfg(feature = "redis")]
 #[derive(Deserialize, Clone)]
 pub struct EthereumLedgerOpt {
     pub private_key: Secret<String>,
@@ -1114,6 +1126,7 @@ pub struct EthereumLedgerOpt {
     pub watch_incoming: bool,
 }
 
+#[cfg(feature = "redis")]
 fn deserialize_redis_connection<'de, D>(deserializer: D) -> Result<ConnectionInfo, D::Error>
 where
     D: Deserializer<'de>,
@@ -1132,7 +1145,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::ethereum_ledger::test_helpers::{
+    use crate::utils::test_helpers::{
         block_on,
         fixtures::{ALICE, BOB, MESSAGES_API},
         test_engine, test_store, TestAccount,

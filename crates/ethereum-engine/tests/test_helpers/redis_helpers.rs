@@ -1,9 +1,44 @@
 // Copied from https://github.com/mitsuhiko/redis-rs/blob/9a1777e8a90c82c315a481cdf66beb7d69e681a2/tests/support/mod.rs
 #![allow(dead_code)]
 
+use redis_crate as redis;
+
+use std::env;
+use std::fs;
+use std::process;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
+use std::path::PathBuf;
+
 use futures::Future;
-use redis::{self, RedisError};
-use std::{env, fs, path::PathBuf, process, thread::sleep, time::Duration};
+
+use redis::RedisError;
+
+use tokio::timer::Delay;
+
+pub fn get_open_port(try_port: Option<u16>) -> u16 {
+    if let Some(port) = try_port {
+        let listener = net2::TcpBuilder::new_v4().unwrap();
+        listener.reuse_address(true).unwrap();
+        if let Ok(listener) = listener.bind(&format!("127.0.0.1:{}", port)) {
+            return listener.listen(1).unwrap().local_addr().unwrap().port();
+        }
+    }
+
+    for _i in 0..1000 {
+        let listener = net2::TcpBuilder::new_v4().unwrap();
+        listener.reuse_address(true).unwrap();
+        if let Ok(listener) = listener.bind("127.0.0.1:0") {
+            return listener.listen(1).unwrap().local_addr().unwrap().port();
+        }
+    }
+    panic!("Cannot find open port!");
+}
+
+pub fn delay(ms: u64) -> impl Future<Item = (), Error = ()> {
+    Delay::new(Instant::now() + Duration::from_millis(ms)).map_err(|err| panic!(err))
+}
 
 #[derive(PartialEq)]
 enum ServerType {
@@ -23,24 +58,32 @@ impl ServerType {
             .as_ref()
             .map(|x| &x[..])
         {
-            // Default to unix unlike original version
+            // Default to unix socket unlike original version
             Some("tcp") => ServerType::Tcp,
             _ => ServerType::Unix,
         }
     }
 }
 
-impl Default for RedisServer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl RedisServer {
+    pub fn spawn_with_port(port: u16) -> std::process::Child {
+        let mut cmd = process::Command::new("redis-server");
+        cmd.stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--bind")
+            .arg("127.0.0.1");
+
+        cmd.spawn().expect(
+            "Could not spawn redis-server process, please ensure \
+             that all redis components are installed",
+        )
+    }
+
     pub fn new() -> RedisServer {
         let server_type = ServerType::get_intended();
         let mut cmd = process::Command::new("redis-server");
-
         cmd.stdout(process::Stdio::null())
             .stderr(process::Stdio::null());
 
@@ -71,7 +114,10 @@ impl RedisServer {
             }
         };
 
-        let process = cmd.spawn().unwrap();
+        let process = cmd.spawn().expect(
+            "Could not spawn redis-server process, please ensure \
+             that all redis components are installed",
+        );
         RedisServer { process, addr }
     }
 
@@ -92,6 +138,12 @@ impl RedisServer {
     }
 }
 
+impl Default for RedisServer {
+    fn default() -> Self {
+        RedisServer::new()
+    }
+}
+
 impl Drop for RedisServer {
     fn drop(&mut self) {
         self.stop()
@@ -101,12 +153,6 @@ impl Drop for RedisServer {
 pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
-}
-
-impl Default for TestContext {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl TestContext {
@@ -137,7 +183,7 @@ impl TestContext {
                 }
             }
         }
-        redis::cmd("FLUSHDB").execute(&mut con);
+        redis::cmd("FLUSHALL").execute(&mut con);
 
         TestContext { server, client }
     }
@@ -155,10 +201,10 @@ impl TestContext {
         self.client.get_connection().unwrap()
     }
 
-    pub fn async_connection(&self) -> impl Future<Item = redis::aio::Connection, Error = ()> {
-        self.client
-            .get_async_connection()
-            .map_err(|err| panic!(err))
+    pub fn async_connection(
+        &self,
+    ) -> impl Future<Item = redis::aio::Connection, Error = RedisError> {
+        self.client.get_async_connection()
     }
 
     pub fn stop_server(&mut self) {
@@ -169,5 +215,11 @@ impl TestContext {
         &self,
     ) -> impl Future<Item = redis::aio::SharedConnection, Error = RedisError> {
         self.client.get_shared_async_connection()
+    }
+}
+
+impl Default for TestContext {
+    fn default() -> Self {
+        TestContext::new()
     }
 }
