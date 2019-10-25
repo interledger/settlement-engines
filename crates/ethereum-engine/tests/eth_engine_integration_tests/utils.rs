@@ -6,19 +6,29 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use hyper::StatusCode;
+use std::process::Command;
 use std::str::FromStr;
+use std::thread::sleep;
+use std::time::Duration;
 
 use web3::{
     futures::future::{err, ok, Future},
     types::{Address, H256, U256},
 };
 
-use crate::engines::ethereum_ledger::{
-    EthereumAccount, EthereumAddresses as Addresses, EthereumLedgerSettlementEngine,
-    EthereumLedgerSettlementEngineBuilder, EthereumLedgerTxSigner, EthereumStore,
+use ethereum_engine::engine::{
+    EthereumLedgerSettlementEngine, EthereumLedgerSettlementEngineBuilder,
 };
-use interledger_http::idempotency::{IdempotentData, IdempotentStore};
-use interledger_settlement::{scale_with_precision_loss, Convert, ConvertDetails, LeftoversStore};
+use ethereum_engine::utils::types::{
+    Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore,
+};
+use interledger_settlement::settlement_core::{
+    idempotency::{IdempotentData, IdempotentStore},
+    scale_with_precision_loss,
+    types::{Convert, ConvertDetails, LeftoversStore},
+};
+
+use num_bigint::BigUint;
 
 #[derive(Debug, Clone)]
 pub struct TestAccount {
@@ -60,8 +70,6 @@ pub struct TestStore {
     pub cache_hits: Arc<RwLock<u64>>,
     pub uncredited_settlement_amount: Arc<RwLock<HashMap<String, (BigUint, u8)>>>,
 }
-
-use num_bigint::BigUint;
 
 impl LeftoversStore for TestStore {
     type AccountId = String;
@@ -308,12 +316,13 @@ impl TestAccount {
     }
 }
 
-// Helper to create a new engine
+// Helper to create a new engine and spin a new ganache instance.
 pub fn test_engine<Si, S, A>(
     store: S,
     key: Si,
     confs: u8,
     connector_url: &str,
+    ganache_port: u16,
     token_address: Option<Address>,
     watch_incoming: bool,
 ) -> EthereumLedgerSettlementEngine<S, Si, A>
@@ -330,6 +339,7 @@ where
 {
     EthereumLedgerSettlementEngineBuilder::new(store, key)
         .connector_url(connector_url)
+        .ethereum_endpoint(&format!("http://localhost:{}", ganache_port))
         .token_address(token_address)
         .confirmations(confs)
         .watch_incoming(watch_incoming)
@@ -337,6 +347,18 @@ where
         .connect()
         .wait()
         .unwrap()
+}
+
+pub fn start_ganache(port: u16) -> std::process::Child {
+    let mut ganache = Command::new("ganache-cli");
+    let ganache = ganache
+        .stdout(std::process::Stdio::null())
+        .arg("-m").arg("abstract vacuum mammal awkward pudding scene penalty purchase dinner depart evoke puzzle")
+        .arg("-p").arg(port.to_string());
+    let ganache_pid = ganache.spawn().expect("couldnt start ganache-cli");
+    // wait a couple of seconds for ganache to boot up
+    sleep(Duration::from_secs(5));
+    ganache_pid
 }
 
 pub fn test_store(

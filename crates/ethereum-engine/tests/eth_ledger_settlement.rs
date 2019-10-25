@@ -15,11 +15,11 @@ use tokio::runtime::Builder as RuntimeBuilder;
 mod test_helpers;
 use test_helpers::{
     accounts_to_ids, create_account_on_engine, get_all_accounts, get_balance, random_secret,
-    redis_helpers::*, send_money_to_username, start_ganache,
+    send_money_to_username, start_ganache,
 };
 
-#[cfg(feature = "ethereum")]
-use test_helpers::start_eth_engine;
+#[cfg(feature = "redis")]
+use test_helpers::{redis_helpers::*, start_eth_engine};
 
 /// In this test we have Alice and Bob who have peered with each other and run
 /// Ethereum ledger settlement engines. Alice proceeds to make SPSP payments to
@@ -28,7 +28,7 @@ use test_helpers::start_eth_engine;
 /// immediately applies the balance change. Bob's engine listens for incoming
 /// transactions, and once the transaction has sufficient confirmations it
 /// lets Bob's connector know about it, so that it adjusts their credit.
-#[cfg(feature = "ethereum")]
+#[cfg(feature = "redis")]
 #[test]
 fn eth_ledger_settlement() {
     let eth_decimals = 9;

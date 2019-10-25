@@ -1,2 +1,2 @@
 mod ganache_tests;
-mod utils;
+pub mod utils;

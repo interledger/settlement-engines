@@ -4,16 +4,18 @@ use interledger::{
     service::Account as AccountTrait,
     store_redis::{Account, AccountId},
 };
-#[cfg(feature = "ethereum")]
-use interledger_settlement_engines::engines::ethereum_ledger::{
-    run_ethereum_engine, EthereumLedgerOpt,
-};
 
+#[cfg(feature = "redis")]
+use ethereum_engine::engine::{run_ethereum_engine, EthereumLedgerOpt};
+
+#[cfg(feature = "redis")]
 pub mod redis_helpers;
+
+#[cfg(feature = "redis")]
+use redis_crate::ConnectionInfo;
 
 use hex;
 use interledger::stream::StreamDelivery;
-use redis::ConnectionInfo;
 use ring::rand::{SecureRandom, SystemRandom};
 use secrecy::Secret;
 use serde::{Deserialize, Serialize};
@@ -77,7 +79,7 @@ pub fn start_xrp_engine(
         .expect("couldnt start xrp engine")
 }
 
-#[cfg(feature = "ethereum")]
+#[cfg(feature = "redis")]
 #[allow(unused)]
 pub fn start_eth_engine(
     db: ConnectionInfo,
