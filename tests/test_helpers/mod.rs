@@ -12,11 +12,15 @@ use interledger_settlement_engines::engines::ethereum_ledger::{
 pub mod redis_helpers;
 
 use hex;
+use interledger::stream::StreamDelivery;
+use redis::ConnectionInfo;
 use ring::rand::{SecureRandom, SystemRandom};
+use secrecy::Secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
+use std::net::SocketAddr;
 use std::process::Command;
 use std::str;
 use std::thread::sleep;
@@ -36,7 +40,7 @@ pub struct DeliveryData {
 
 #[derive(Deserialize)]
 pub struct BalanceData {
-    pub balance: String,
+    pub balance: i64,
 }
 
 #[allow(unused)]
@@ -185,7 +189,7 @@ pub fn send_money_to_username<T: Display + Debug>(
             eprintln!("Error sending SPSP payment: {:?}", err);
         })
         .and_then(move |body| {
-            let ret: DeliveryData = serde_json::from_slice(&body).unwrap();
+            let ret: StreamDelivery = serde_json::from_slice(&body).unwrap();
             Ok(ret.delivered_amount)
         })
 }
@@ -241,7 +245,7 @@ pub fn get_balance<T: Display>(
         })
         .and_then(|body| {
             let ret: BalanceData = serde_json::from_slice(&body).unwrap();
-            Ok(ret.balance.parse().unwrap())
+            Ok(ret.balance)
         })
 }
 

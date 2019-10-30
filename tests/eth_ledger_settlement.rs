@@ -63,7 +63,7 @@ fn eth_ledger_settlement() {
     let node1: InterledgerNode = serde_json::from_value(json!({
         "ilp_address": "example.alice",
         "admin_auth_token": "admin",
-        "redis_connection": connection_info_to_string(connection_info1),
+        "redis_connection": connection_info_to_string(connection_info1.clone()),
         "http_bind_address": format!("127.0.0.1:{}", node1_http),
         "settlement_api_bind_address": format!("127.0.0.1:{}", node1_settlement),
         "secret_seed": random_secret(),
@@ -134,7 +134,7 @@ fn eth_ledger_settlement() {
 
     let node2: InterledgerNode = serde_json::from_value(json!({
         "admin_auth_token": "admin",
-        "redis_connection": connection_info_to_string(connection_info2),
+        "redis_connection": connection_info_to_string(connection_info2.clone()),
         "http_bind_address": format!("127.0.0.1:{}", node2_http),
         "settlement_api_bind_address": format!("127.0.0.1:{}", node2_settlement),
         "secret_seed": random_secret(),
