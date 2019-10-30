@@ -13,22 +13,22 @@ log = "0.4.6"
 tokio = "0.1.21"
 hyper = "0.12.31"
 futures = "0.1.25"
-interledger-service = "^0.2.2-alpha.1"
-interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
-interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
-interledger-service-util = "^0.2.2-alpha.1"
-interledger-ildcp = "^0.2.2-alpha.1"
+interledger-service = "0.3.0"
+interledger-settlement = "0.2.0"
+interledger-http = { version = "0.3.0", features = ["idempotency"] }
+interledger-service-util = "0.3.0"
+interledger-ildcp = "0.3.0"
 ethabi = "8.0.1"
 serde = { version = "1.0.101", default-features = false }
 serde_json = { version = "1.0.41", default-features = false }
 json = "0.11.14"
 bytes = "0.4.12"
-ring = "0.14.6"
+ring = "0.16.9"
 tokio-executor = "0.1.8"
 url = "2.1.0"
 reqwest = "0.9.20"
 env_logger = "0.6.2"
-uuid = { version = "0.7.4", features = ["serde", "v4"]  }
+uuid = { version = "0.8.1", features = ["serde", "v4"]  }
 tokio-retry = "0.2.0"
 redis = "0.12.0"
 http = "0.1.17"
@@ -38,7 +38,7 @@ sha3 = "0.8.2"
 num-bigint = "0.2.2"
 num-traits = "0.2.8"
 lazy_static = "1.4.0"
-secrecy = { version = "0.4.0", features = ["serde", "bytes"] }
+secrecy = { version = "0.5.0", features = ["serde", "bytes"] }
 zeroize = { version = "0.10.1", features = ["bytes"] }
 parking_lot = "0.9.0"
 config = { version = "0.9.3", features = [ "json", "yaml" ] }
@@ -57,8 +57,8 @@ parking_lot = "0.9.0"
 net2 = "0.2.33"
 os_type = "2.2.0"
 rand = "0.7.0"
-interledger = "^0.4.1-alpha.1"
-ilp-node = "^0.4.1-alpha.1"
+interledger = "0.5.0"
+ilp-node = "0.5.0"
 
 [features]
 ethereum = ["tiny-keccak", "secp256k1", "rlp", "ethereum-types"]

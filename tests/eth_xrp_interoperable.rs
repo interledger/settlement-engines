@@ -3,7 +3,7 @@
 
 use env_logger;
 use futures::{future::join_all, Future};
-use ilp_node::{random_secret, InterledgerNode};
+use ilp_node::InterledgerNode;
 use interledger::{api::AccountSettings, packet::Address, service::Username};
 use serde_json::json;
 use std::net::SocketAddr;
@@ -12,8 +12,9 @@ use tokio::runtime::Builder as RuntimeBuilder;
 
 mod test_helpers;
 use test_helpers::{
-    accounts_to_ids, create_account_on_node, get_all_accounts, get_balance, redis_helpers::*,
-    send_money_to_username, set_node_settlement_engines, start_ganache, start_xrp_engine,
+    accounts_to_ids, create_account_on_node, get_all_accounts, get_balance, random_secret,
+    redis_helpers::*, send_money_to_username, set_node_settlement_engines, start_ganache,
+    start_xrp_engine,
 };
 
 #[cfg(feature = "ethereum")]
@@ -87,23 +88,20 @@ fn eth_xrp_interoperable() {
     );
 
     let mut runtime = RuntimeBuilder::new()
-        .panic_handler(|_| panic!("Tokio worker panicked"))
+        .panic_handler(|err| std::panic::resume_unwind(err))
         .build()
         .unwrap();
 
-    let node1 = InterledgerNode {
-        ilp_address: Some(Address::from_str("example.alice").unwrap()),
-        default_spsp_account: None,
-        admin_auth_token: "admin".to_string(),
-        redis_connection: connection_info1,
-        http_bind_address: ([127, 0, 0, 1], node1_http).into(),
-        settlement_api_bind_address: ([127, 0, 0, 1], node1_settlement).into(),
-        secret_seed: random_secret(),
-        route_broadcast_interval: Some(200),
-        exchange_rate_poll_interval: 60000,
-        exchange_rate_provider: None,
-        exchange_rate_spread: 0.0,
-    };
+    let node1: InterledgerNode = serde_json::from_value(json!({
+        "ilp_address": "example.alice",
+        "admin_auth_token": "admin",
+        "redis_connection": connection_info_to_string(connection_info1),
+        "http_bind_address": format!("127.0.0.1:{}", node1_http),
+        "settlement_api_bind_address": format!("127.0.0.1:{}", node1_settlement),
+        "secret_seed": random_secret(),
+        "route_broadcast_interval": 200,
+    }))
+    .unwrap();
     let alice_on_alice = json!({
         "ilp_address": "example.alice",
         "username": "alice",
@@ -138,19 +136,16 @@ fn eth_xrp_interoperable() {
             .and_then(move |_| Ok(())),
     );
 
-    let node2 = InterledgerNode {
-        ilp_address: Some(Address::from_str("example.bob").unwrap()),
-        default_spsp_account: None,
-        admin_auth_token: "admin".to_string(),
-        redis_connection: connection_info2,
-        http_bind_address: ([127, 0, 0, 1], node2_http).into(),
-        settlement_api_bind_address: ([127, 0, 0, 1], node2_settlement).into(),
-        secret_seed: random_secret(),
-        route_broadcast_interval: Some(200),
-        exchange_rate_poll_interval: 60000,
-        exchange_rate_provider: None,
-        exchange_rate_spread: 0.0,
-    };
+    let node2: InterledgerNode = serde_json::from_value(json!({
+        "ilp_address": "example.bob",
+        "admin_auth_token": "admin",
+        "redis_connection": connection_info_to_string(connection_info2),
+        "http_bind_address": format!("127.0.0.1:{}", node2_http),
+        "settlement_api_bind_address": format!("127.0.0.1:{}", node2_settlement),
+        "secret_seed": random_secret(),
+        "route_broadcast_interval": 200,
+    }))
+    .unwrap();
 
     // Instead of using settlement engines configured for each account,
     // Bob uses globally-configured settlement engines for each currency
@@ -220,19 +215,15 @@ fn eth_xrp_interoperable() {
     let charlie_fut = create_account_on_node(node3_http, bob_on_charlie, "admin")
         .and_then(move |_| create_account_on_node(node3_http, charlie_on_charlie, "admin"));
 
-    let node3 = InterledgerNode {
-        ilp_address: None,
-        default_spsp_account: None,
-        admin_auth_token: "admin".to_string(),
-        redis_connection: connection_info3,
-        http_bind_address: ([127, 0, 0, 1], node3_http).into(),
-        settlement_api_bind_address: ([127, 0, 0, 1], node3_settlement).into(),
-        secret_seed: random_secret(),
-        route_broadcast_interval: Some(200),
-        exchange_rate_poll_interval: 60000,
-        exchange_rate_provider: None,
-        exchange_rate_spread: 0.0,
-    };
+    let node3: InterledgerNode = serde_json::from_value(json!({
+        "admin_auth_token": "admin",
+        "redis_connection": connection_info_to_string(connection_info3),
+        "http_bind_address": format!("127.0.0.1:{}", node3_http),
+        "settlement_api_bind_address": format!("127.0.0.1:{}", node3_settlement),
+        "secret_seed": random_secret(),
+        "route_broadcast_interval": 200,
+    }))
+    .unwrap();
 
     runtime
         .block_on(

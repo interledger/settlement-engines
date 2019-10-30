@@ -2,7 +2,7 @@ use futures::{stream::Stream, Future};
 use interledger::{
     packet::Address,
     service::Account as AccountTrait,
-    store_redis::{Account, AccountId, ConnectionInfo},
+    store_redis::{Account, AccountId},
 };
 #[cfg(feature = "ethereum")]
 use interledger_settlement_engines::engines::ethereum_ledger::{
@@ -11,16 +11,23 @@ use interledger_settlement_engines::engines::ethereum_ledger::{
 
 pub mod redis_helpers;
 
-use secrecy::Secret;
+use hex;
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
-use std::net::SocketAddr;
 use std::process::Command;
 use std::str;
 use std::thread::sleep;
 use std::time::Duration;
+
+#[allow(unused)]
+pub fn random_secret() -> String {
+    let mut bytes: [u8; 32] = [0; 32];
+    SystemRandom::new().fill(&mut bytes).unwrap();
+    hex::encode(bytes)
+}
 
 #[derive(Deserialize)]
 pub struct DeliveryData {
