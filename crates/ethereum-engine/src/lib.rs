@@ -13,4 +13,4 @@ mod backends;
 pub mod engine;
 pub mod utils;
 #[cfg(feature = "redis")]
-pub use engine::run_ethereum_engine;
+pub use engine::{run_ethereum_engine, EthereumLedgerOpt};
