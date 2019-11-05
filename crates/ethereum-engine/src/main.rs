@@ -1,4 +1,6 @@
-use clap::{crate_version, App, AppSettings, ArgMatches};
+use clap::Arg;
+use clap::{crate_version, App, ArgMatches};
+use config::Value;
 use config::{Config, FileFormat, Source};
 use futures::Future;
 use libc::{c_int, isatty};
@@ -6,16 +8,8 @@ use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::vec::Vec;
 
-#[cfg(feature = "ethereum")]
-use clap::{Arg, SubCommand};
-
-#[cfg(feature = "ethereum")]
-use config::Value;
-
-#[cfg(feature = "ethereum")]
-use interledger_settlement_engines::engines::ethereum_ledger::{
-    run_ethereum_engine, EthereumLedgerOpt,
-};
+#[cfg(feature = "redis")]
+use ethereum_engine::engine::{run_ethereum_engine, EthereumLedgerOpt};
 
 pub fn main() {
     env_logger::init();
@@ -35,79 +29,72 @@ pub fn main() {
     //     - `http_bind_address`
     // - Addresses to which other services are bound
     //     - `xxx_bind_address`
-    let mut app = App::new("interledger-settlement-engines")
-        .about("Interledger Settlement Engines CLI")
+    let mut app = App::new("ethereum-engine")
+        .about("Ethereum settlement engine which performs ledger (layer 1) transactions")
         .version(crate_version!())
-        .setting(AppSettings::SubcommandsNegateReqs)
         // TODO remove this line once this issue is solved:
         // https://github.com/clap-rs/clap/issues/1536
         .after_help("")
-        .subcommands(vec![
-            #[cfg(feature = "ethereum")]
-            SubCommand::with_name("ethereum-ledger")
-                .about("Ethereum settlement engine which performs ledger (layer 1) transactions")
-                .setting(AppSettings::SubcommandsNegateReqs)
-                .args(&[
-                    // Positional arguments
-                    Arg::with_name("config")
-                        .takes_value(true)
-                        .index(1)
-                        .help("Name of config file (in JSON, YAML, or TOML format)"),
-                    // Non-positional arguments
-                    Arg::with_name("settlement_api_bind_address")
-                        .long("settlement_api_bind_address")
-                        .takes_value(true)
-                        .default_value("127.0.0.1:3000")
-                        .help("Port to listen for settlement requests on"),
-                    Arg::with_name("private_key")
-                        .long("private_key")
-                        .takes_value(true)
-                        .required(true)
-                        .help("Ethereum private key for settlement account"),
-                    Arg::with_name("ethereum_url")
-                        .long("ethereum_url")
-                        .takes_value(true)
-                        .default_value("http://127.0.0.1:8545")
-                        .help("Ethereum node endpoint URL. For example, the address of `ganache`"),
-                    Arg::with_name("token_address")
-                        .long("token_address")
-                        .takes_value(true)
-                        .help("The address of the ERC20 token to be used for settlement (defaults to sending ETH if no token address is provided)"),
-                    Arg::with_name("connector_url")
-                        .long("connector_url")
-                        .takes_value(true)
-                        .help("Connector Settlement API endpoint")
-                        .default_value("http://127.0.0.1:7771"),
-                    Arg::with_name("redis_url")
-                        .long("redis_url")
-                        .takes_value(true)
-                        .default_value("redis://127.0.0.1:6379")
-                        .help("Redis database to add the account to"),
-                    Arg::with_name("chain_id")
-                        .long("chain_id")
-                        .takes_value(true)
-                        .default_value("1")
-                        .help("The chain id so that the signer calculates the v value of the sig appropriately. Defaults to 1 which means the mainnet. There are some other options such as: 3(Ropsten: PoW testnet), 4(Rinkeby: PoA testnet), etc."),
-                    Arg::with_name("confirmations")
-                        .long("confirmations")
-                        .takes_value(true)
-                        .default_value("6")
-                        .help("The number of confirmations the engine will wait for a transaction's inclusion before it notifies the node of its success"),
-                    Arg::with_name("asset_scale")
-                        .long("asset_scale")
-                        .takes_value(true)
-                        .default_value("18")
-                        .help("The asset scale you want to use for your payments"),
-                    Arg::with_name("poll_frequency")
-                        .long("poll_frequency")
-                        .takes_value(true)
-                        .default_value("5000")
-                        .help("The frequency in milliseconds at which the engine will check the blockchain about the confirmation status of a tx"),
-                    Arg::with_name("watch_incoming")
-                        .long("watch_incoming")
-                        .default_value("true")
-                        .help("Launch a blockchain watcher that listens for incoming transactions and notifies the connector upon sufficient confirmations"),
-                ])
+        .args(&[
+            // Positional arguments
+            Arg::with_name("config")
+                .takes_value(true)
+                .index(1)
+                .help("Name of config file (in JSON, YAML, or TOML format)"),
+            // Non-positional arguments
+            Arg::with_name("settlement_api_bind_address")
+                .long("settlement_api_bind_address")
+                .takes_value(true)
+                .default_value("127.0.0.1:3000")
+                .help("Port to listen for settlement requests on"),
+            Arg::with_name("private_key")
+                .long("private_key")
+                .takes_value(true)
+                .required(true)
+                .help("Ethereum private key for settlement account"),
+            Arg::with_name("ethereum_url")
+                .long("ethereum_url")
+                .takes_value(true)
+                .default_value("http://127.0.0.1:8545")
+                .help("Ethereum node endpoint URL. For example, the address of `ganache`"),
+            Arg::with_name("token_address")
+                .long("token_address")
+                .takes_value(true)
+                .help("The address of the ERC20 token to be used for settlement (defaults to sending ETH if no token address is provided)"),
+            Arg::with_name("connector_url")
+                .long("connector_url")
+                .takes_value(true)
+                .help("Connector Settlement API endpoint")
+                .default_value("http://127.0.0.1:7771"),
+            Arg::with_name("redis_url")
+                .long("redis_url")
+                .takes_value(true)
+                .default_value("redis://127.0.0.1:6379")
+                .help("Redis database to add the account to"),
+            Arg::with_name("chain_id")
+                .long("chain_id")
+                .takes_value(true)
+                .default_value("1")
+                .help("The chain id so that the signer calculates the v value of the sig appropriately. Defaults to 1 which means the mainnet. There are some other options such as: 3(Ropsten: PoW testnet), 4(Rinkeby: PoA testnet), etc."),
+            Arg::with_name("confirmations")
+                .long("confirmations")
+                .takes_value(true)
+                .default_value("6")
+                .help("The number of confirmations the engine will wait for a transaction's inclusion before it notifies the node of its success"),
+            Arg::with_name("asset_scale")
+                .long("asset_scale")
+                .takes_value(true)
+                .default_value("18")
+                .help("The asset scale you want to use for your payments"),
+            Arg::with_name("poll_frequency")
+                .long("poll_frequency")
+                .takes_value(true)
+                .default_value("5000")
+                .help("The frequency in milliseconds at which the engine will check the blockchain about the confirmation status of a tx"),
+            Arg::with_name("watch_incoming")
+                .long("watch_incoming")
+                .default_value("true")
+                .help("Launch a blockchain watcher that listens for incoming transactions and notifies the connector upon sufficient confirmations"),
         ]);
 
     let mut config = get_env_config("ilp");
@@ -121,17 +108,13 @@ pub fn main() {
         set_app_env(&config, &mut app, &path, path.len());
     }
     let matches = app.clone().get_matches();
-    match matches.subcommand() {
-        #[cfg(feature = "ethereum")]
-        ("ethereum-ledger", Some(ethereum_ledger_matches)) => {
-            merge_args(&mut config, &ethereum_ledger_matches);
-            tokio_run(run_ethereum_engine(
-                config.try_into::<EthereumLedgerOpt>().unwrap(),
-            ));
-        }
-        ("", None) => app.print_help().unwrap(),
-        _ => unreachable!(),
-    }
+    merge_args(&mut config, &matches);
+    // TODO: Abstract this over the backend being used.
+    #[cfg(feature = "redis")]
+    tokio_run(run_ethereum_engine(
+        config.try_into::<EthereumLedgerOpt>().unwrap(),
+    ));
+    unreachable!();
 }
 
 // returns (subcommand paths, config path)
@@ -189,7 +172,6 @@ fn merge_std_in(config: &mut Config) {
     }
 }
 
-#[cfg(feature = "ethereum")]
 fn merge_args(config: &mut Config, matches: &ArgMatches) {
     for (key, value) in &matches.args {
         if config.get_str(key).is_ok() {
