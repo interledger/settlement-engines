@@ -38,12 +38,12 @@ use web3::{
 };
 
 use interledger_http::error::*;
-use secrecy::Secret;
 use interledger_settlement::settlement_core::{
     api::create_settlement_engine_filter,
     scale_with_precision_loss,
     types::{ApiResponse, LeftoversStore, Quantity, SettlementEngine, CONVERSION_ERROR_TYPE},
 };
+use secrecy::Secret;
 
 const MAX_RETRIES: usize = 10;
 const ETH_CREATE_ACCOUNT_PREFIX: &[u8] = b"ilp-ethl-create-account-message";

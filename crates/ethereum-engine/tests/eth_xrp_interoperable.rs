@@ -235,8 +235,8 @@ fn eth_xrp_interoperable() {
                     client
                         .put(&format!("http://localhost:{}/rates", node2_http))
                         .header("Authorization", "Bearer admin")
-                        // Let's say 0.001 ETH = 1 XRP for this example
-                        .json(&json!({"XRP": 1000, "ETH": 1}))
+                        // 1 XRP = $1, 1 ETH = $1000
+                        .json(&json!({"XRP": 1, "ETH": 1000}))
                         .send()
                         .map_err(|err| panic!(err))
                         .and_then(|res| {
