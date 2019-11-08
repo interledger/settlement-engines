@@ -21,7 +21,7 @@ futures = "0.1.29"
 http = "0.1.19"
 num-traits = "0.2.8"
 num-bigint = "0.2.3"
-ring = { version = "0.14.6", default-features = false }
+ring = { version = "0.16.9", default-features = false }
 warp = "0.1.20"
 redis_crate = { package = "redis", version = "0.13.0", optional = true }
 hyper = "0.12.35"
