@@ -145,7 +145,7 @@ impl LeftoversStore for TestStore {
 
     fn clear_uncredited_settlement_amount(
         &self,
-        account_id: Self::AccountId,
+        _account_id: Self::AccountId,
     ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
         unreachable!()
     }
