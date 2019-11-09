@@ -9,8 +9,6 @@
 //! xrp_ledger, etc.
 #![recursion_limit = "128"]
 
-mod backends;
-pub mod engine;
+pub mod backends;
 pub mod utils;
-#[cfg(feature = "redis")]
-pub use engine::{run_ethereum_engine, EthereumLedgerOpt};
+pub mod engine;
