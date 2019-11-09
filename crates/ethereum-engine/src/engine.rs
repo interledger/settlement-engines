@@ -3,7 +3,6 @@ use super::utils::{
     web3::{filter_transfer_logs, make_tx, sent_to_us, ERC20Transfer, EthAddress},
 };
 
-use bytes::Bytes;
 use clarity::Signature;
 use log::{debug, error, trace};
 use parking_lot::RwLock;
@@ -847,7 +846,7 @@ where
                                 ApiError::from_api_error_type(&err_type).detail(err)
                             })
                             .and_then(move |_| {
-                                Ok((StatusCode::from_u16(201).unwrap(), Bytes::from("CREATED")))
+                                Ok(ApiResponse::Default)
                             }),
                     )
                 })
@@ -918,7 +917,7 @@ where
                 let ret = PaymentDetailsResponse::new(address, signature, Some(challenge));
                 serde_json::to_vec(&ret).unwrap()
             };
-            Box::new(ok((StatusCode::from_u16(200).unwrap(), resp.into())))
+            Box::new(ok(ApiResponse::Data(resp.into())))
         } else if let Ok(resp) = serde_json::from_slice::<PaymentDetailsResponse>(&body) {
             debug!("Received payment details: {:?}", resp);
             let guard = self.challenges.read();
@@ -962,9 +961,7 @@ where
                 Either::B(ok(()))
             };
 
-            Box::new(
-                fut.and_then(move |_| Ok((StatusCode::from_u16(200).unwrap(), Bytes::from("OK")))),
-            )
+            Box::new(fut.and_then(move |_| Ok(ApiResponse::Default)))
         } else {
             let error_msg = "Ignoring message that was neither a PaymentDetailsRequest nor a PaymentDetailsResponse";
             error!("{}", error_msg);
@@ -1060,7 +1057,7 @@ where
                         }))
                     },
                 )
-                .and_then(move |_| Ok((StatusCode::OK, Bytes::from("OK")))),
+                .and_then(move |_| Ok(ApiResponse::Default)),
         )
     }
 }
@@ -1264,13 +1261,15 @@ mod tests {
         // Alice's engine receives a challenge by Bob.
         let c = serde_json::to_vec(&PaymentDetailsRequest::new(challenge)).unwrap();
         let ret = block_on(engine.receive_message(bob.id.to_string(), c)).unwrap();
-        assert_eq!(ret.0.as_u16(), 200);
-
         let alice_addrs = Addresses {
             own_address: ALICE.address,
             token_address: None,
         };
-        let data: PaymentDetailsResponse = serde_json::from_slice(&ret.1).unwrap();
+        let data = match ret {
+            ApiResponse::Default => panic!("got default when we expected data"),
+            ApiResponse::Data(b) => b,
+        };
+        let data: PaymentDetailsResponse = serde_json::from_slice(&data).unwrap();
         // The returned addresses must be Alice's
         assert_eq!(data.to, alice_addrs);
         // The returned signature must be Alice's sig.
@@ -1290,8 +1289,9 @@ mod tests {
         let c =
             serde_json::to_vec(&PaymentDetailsResponse::new(bob_addrs, signature, None)).unwrap();
         let ret = block_on(engine.receive_message(bob.id.to_string(), c)).unwrap();
-        assert_eq!(ret.0.as_u16(), 200);
-        assert_eq!(ret.1, Bytes::from("OK".to_owned()));
+        if let ApiResponse::Data(_) = ret {
+            panic!("got data when we expected default ret")
+        }
 
         // check that alice's store got updated with bob's addresses
         let addrs = store
