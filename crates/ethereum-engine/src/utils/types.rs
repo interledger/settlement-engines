@@ -60,6 +60,13 @@ pub trait EthereumStore {
         account_ids: Vec<<Self::Account as EthereumAccount>::AccountId>,
     ) -> Box<dyn Future<Item = Vec<Addresses>, Error = ()> + Send>;
 
+    /// Deletes the Ethereum address associated with this account
+    /// called when deleting an account on the API.
+    fn delete_accounts(
+        &self,
+        account_ids: Vec<<Self::Account as EthereumAccount>::AccountId>,
+    ) -> Box<dyn Future<Item = (), Error = ()> + Send>;
+
     /// Saves the latest block number, up to which all
     /// transactions have been communicated to the connector
     fn save_recently_observed_block(
