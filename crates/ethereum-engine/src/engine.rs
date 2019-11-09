@@ -1065,81 +1065,79 @@ fn prefixed_message(challenge: Vec<u8>) -> Vec<u8> {
 // Redis helpers to run binaries
 
 #[cfg(feature = "redis")]
-use crate::backends::redis::*;
-#[cfg(feature = "redis")]
-use redis_crate::ConnectionInfo;
-#[cfg(feature = "redis")]
-use redis_crate::IntoConnectionInfo;
+pub mod redis_bin {
+    use super::*;
+    use crate::backends::redis::*;
+    use redis_crate::ConnectionInfo;
+    use redis_crate::IntoConnectionInfo;
 
-#[doc(hidden)]
-#[allow(clippy::all)]
-#[cfg(feature = "redis")]
-pub fn run_ethereum_engine(opt: EthereumLedgerOpt) -> impl Future<Item = (), Error = ()> {
-    // TODO make key compatible with
-    // https://github.com/tendermint/signatory to have HSM sigs
+    #[doc(hidden)]
+    #[allow(clippy::all)]
+    pub fn run_ethereum_engine(opt: EthereumLedgerOpt) -> impl Future<Item = (), Error = ()> {
+        // TODO make key compatible with
+        // https://github.com/tendermint/signatory to have HSM sigs
 
-    EthereumLedgerRedisStoreBuilder::new(opt.redis_connection.clone())
-        .connect()
-        .and_then(move |ethereum_store| {
-            let engine_fut = EthereumLedgerSettlementEngineBuilder::new(
-                ethereum_store.clone(),
-                opt.private_key.clone(),
-            )
-            .ethereum_endpoint(&opt.ethereum_url)
-            .chain_id(opt.chain_id)
-            .connector_url(&opt.connector_url)
-            .confirmations(opt.confirmations)
-            .asset_scale(opt.asset_scale)
-            .poll_frequency(opt.poll_frequency)
-            .watch_incoming(opt.watch_incoming)
-            .token_address(opt.token_address)
-            .connect();
+        EthereumLedgerRedisStoreBuilder::new(opt.redis_connection.clone())
+            .connect()
+            .and_then(move |ethereum_store| {
+                let engine_fut = EthereumLedgerSettlementEngineBuilder::new(
+                    ethereum_store.clone(),
+                    opt.private_key.clone(),
+                )
+                .ethereum_endpoint(&opt.ethereum_url)
+                .chain_id(opt.chain_id)
+                .connector_url(&opt.connector_url)
+                .confirmations(opt.confirmations)
+                .asset_scale(opt.asset_scale)
+                .poll_frequency(opt.poll_frequency)
+                .watch_incoming(opt.watch_incoming)
+                .token_address(opt.token_address)
+                .connect();
 
-            engine_fut.and_then(move |engine| {
-                let api = create_settlement_engine_filter(engine, ethereum_store);
-                tokio::spawn(warp::serve(api).bind(opt.settlement_api_bind_address));
-                info!(
-                    "Ethereum Settlement Engine listening on: {}",
-                    &opt.settlement_api_bind_address
-                );
-                Ok(())
+                engine_fut.and_then(move |engine| {
+                    let api = create_settlement_engine_filter(engine, ethereum_store);
+                    tokio::spawn(warp::serve(api).bind(opt.settlement_api_bind_address));
+                    info!(
+                        "Ethereum Settlement Engine listening on: {}",
+                        &opt.settlement_api_bind_address
+                    );
+                    Ok(())
+                })
             })
-        })
-}
+    }
 
-#[cfg(feature = "redis")]
-#[derive(Deserialize, Clone)]
-pub struct EthereumLedgerOpt {
-    pub private_key: Secret<String>,
-    pub settlement_api_bind_address: SocketAddr,
-    pub ethereum_url: String,
-    pub token_address: Option<EthAddress>,
-    pub connector_url: String,
-    #[serde(deserialize_with = "deserialize_redis_connection", alias = "redis_url")]
-    pub redis_connection: ConnectionInfo,
-    // Although the length of `chain_id` seems to be not limited on its specs,
-    // u8 seems sufficient at this point.
-    pub chain_id: u8,
-    pub confirmations: u8,
-    pub asset_scale: u8,
-    pub poll_frequency: u64,
-    pub watch_incoming: bool,
-}
+    #[derive(Deserialize, Clone)]
+    pub struct EthereumLedgerOpt {
+        pub private_key: Secret<String>,
+        pub settlement_api_bind_address: SocketAddr,
+        pub ethereum_url: String,
+        pub token_address: Option<EthAddress>,
+        pub connector_url: String,
+        #[serde(deserialize_with = "deserialize_redis_connection", alias = "redis_url")]
+        pub redis_connection: ConnectionInfo,
+        // Although the length of `chain_id` seems to be not limited on its specs,
+        // u8 seems sufficient at this point.
+        pub chain_id: u8,
+        pub confirmations: u8,
+        pub asset_scale: u8,
+        pub poll_frequency: u64,
+        pub watch_incoming: bool,
+    }
 
-#[cfg(feature = "redis")]
-fn deserialize_redis_connection<'de, D>(deserializer: D) -> Result<ConnectionInfo, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Url::parse(&String::deserialize(deserializer)?)
-        .map_err(|err| DeserializeError::custom(format!("Invalid URL: {:?}", err)))?
-        .into_connection_info()
-        .map_err(|err| {
-            DeserializeError::custom(format!(
-                "Error converting into Redis connection info: {:?}",
-                err
-            ))
-        })
+    fn deserialize_redis_connection<'de, D>(deserializer: D) -> Result<ConnectionInfo, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Url::parse(&String::deserialize(deserializer)?)
+            .map_err(|err| DeserializeError::custom(format!("Invalid URL: {:?}", err)))?
+            .into_connection_info()
+            .map_err(|err| {
+                DeserializeError::custom(format!(
+                    "Error converting into Redis connection info: {:?}",
+                    err
+                ))
+            })
+    }
 }
 
 #[cfg(test)]
