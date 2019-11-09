@@ -845,9 +845,7 @@ where
                                 error!("{}", err);
                                 ApiError::from_api_error_type(&err_type).detail(err)
                             })
-                            .and_then(move |_| {
-                                Ok(ApiResponse::Default)
-                            }),
+                            .and_then(move |_| Ok(ApiResponse::Default)),
                     )
                 })
             }),
@@ -861,28 +859,29 @@ where
     ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
         let store = self.store.clone();
         let account_id_clone = account_id.clone();
-        Box::new(self.load_account(account_id.clone()).map_err(|err| {
-            let error_msg = format!("Error loading account {:?}", err);
-            error!("{}", error_msg);
-            ApiError::internal_server_error().detail(error_msg)
-        })
-        .and_then(move |_| {
-            // if the load call succeeds, then the account exists and we must:
-            // 1. delete their addresses
-            // 2. clear their uncredited settlement amounts
-            join_all(vec![
-                store.clear_uncredited_settlement_amount(account_id_clone.clone()),
-                store.delete_accounts(vec![account_id]),
-            ])
-            .map_err(move |err| {
-                let error_msg = format!("Couldn't connect to store {:?}", err);
-                error!("{}", error_msg);
-                ApiError::internal_server_error().detail(error_msg)
-            })
-        })
-        .and_then(move |_| {
-            Ok(ApiResponse::Default)
-        }))
+        Box::new(
+            self.load_account(account_id.clone())
+                .map_err(|err| {
+                    let error_msg = format!("Error loading account {:?}", err);
+                    error!("{}", error_msg);
+                    ApiError::internal_server_error().detail(error_msg)
+                })
+                .and_then(move |_| {
+                    // if the load call succeeds, then the account exists and we must:
+                    // 1. delete their addresses
+                    // 2. clear their uncredited settlement amounts
+                    join_all(vec![
+                        store.clear_uncredited_settlement_amount(account_id_clone.clone()),
+                        store.delete_accounts(vec![account_id]),
+                    ])
+                    .map_err(move |err| {
+                        let error_msg = format!("Couldn't connect to store {:?}", err);
+                        error!("{}", error_msg);
+                        ApiError::internal_server_error().detail(error_msg)
+                    })
+                })
+                .and_then(move |_| Ok(ApiResponse::Default)),
+        )
     }
 
     /// Settlement Engine's function that corresponds to the
