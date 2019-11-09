@@ -7,15 +7,16 @@
 
 > Interledger Settlement Engines implementation in Rust :money_with_wings:. 
 
-### Compliant with the latest [RFC](https://github.com/interledger/rfcs/pull/536/)
+### Compliant with the [RFC](https://interledger.org/rfcs/0038-settlement-engines/)
 
 ## Currently Supported Engines
 
-- Ethereum L1 payments
+- Ethereum L1 payments (`ethereum-engine`)
 
 ## Installation and Usage
 
-To run the settlement engines components you can use the following instructions:
+To run the settlement engines components you can use the following instructions,
+depending on the engine you want to use:
 
 ### Using Docker
 
@@ -26,7 +27,7 @@ To run the settlement engines components you can use the following instructions:
 #### Install
 
 ```bash #
-docker pull interledgerrs/settlement-engines
+docker pull interledgerrs/ethereum-engine
 `````
 
 ### Building From Source
@@ -40,19 +41,24 @@ docker pull interledgerrs/settlement-engines
 
 ```bash #
 # 1. Clone the repository and change the working directory
-git clone https://github.com/interledger-rs/settlement-engines && cd settlement-engines
+git clone https://github.com/interledger-rs/settlement-engines
 
-# 2. Build the Ethereum engine (add `--release` to compile the release version, which is slower to compile but faster to run)
-cargo build --features "ethereum" 
+# 2. Build the engine of your choice (add `--release` to compile the release version, which is slower to compile but faster to run)
+cargo build --bin <engine-name> 
+
+This will build an engine with a redis backend. In the future, you will be able to use engines with more backends than just redis.
+
+The currently supported engines are `ethereum-engine`, which performs settlement on Ethereum (Layer 1) without payment channel support.
+
 
 # 3. Run tests
-cargo test --features "ethereum"
+cargo test --all --all-features
 ```
 
 #### Run
 
 ```bash 
-cargo run --features "ethereum" -- # Put CLI args after the "--"
+cargo run --bin <engine-name> 
 ```
 
 Append the `--help` flag to see available options.
