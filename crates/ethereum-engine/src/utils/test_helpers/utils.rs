@@ -142,6 +142,13 @@ impl LeftoversStore for TestStore {
             (BigUint::from(0u32), 1)
         }))
     }
+
+    fn clear_uncredited_settlement_amount(
+        &self,
+        account_id: Self::AccountId,
+    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+        unreachable!()
+    }
 }
 
 impl EthereumStore for TestStore {
@@ -157,6 +164,13 @@ impl EthereumStore for TestStore {
             (*guard).insert(acc.clone(), d);
             (*guard2).insert(d, acc);
         }
+        Box::new(ok(()))
+    }
+
+    fn delete_accounts(
+        &self,
+        _account_ids: Vec<String>,
+    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
         Box::new(ok(()))
     }
 

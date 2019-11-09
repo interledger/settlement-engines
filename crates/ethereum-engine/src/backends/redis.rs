@@ -141,6 +141,14 @@ impl LeftoversStore for EthereumLedgerRedisStore {
         self.redis_store
             .load_uncredited_settlement_amount(account_id, local_scale)
     }
+
+    fn clear_uncredited_settlement_amount(
+        &self,
+        account_id: Self::AccountId,
+    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+        self.redis_store
+            .clear_uncredited_settlement_amount(account_id)
+    }
 }
 
 impl IdempotentStore for EthereumLedgerRedisStore {
@@ -217,6 +225,26 @@ impl EthereumStore for EthereumLedgerRedisStore {
                         ok(ret)
                     },
                 ),
+        )
+    }
+
+    fn delete_accounts(
+        &self,
+        account_ids: Vec<String>,
+    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+        let mut pipe = redis::pipe();
+        for account_id in account_ids.iter() {
+            pipe.del(ethereum_ledger_key(&account_id));
+        }
+        Box::new(
+            pipe.query_async(self.connection.clone())
+                .map_err(move |err| {
+                    error!(
+                        "Error the addresses for accounts: {:?} {:?}",
+                        account_ids, err
+                    )
+                })
+                .and_then(move |(_conn, _ret): (_, Value)| Ok(())),
         )
     }
 
