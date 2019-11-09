@@ -62,4 +62,5 @@ interledger = { git = "https://github.com/interledger-rs/interledger-rs", branch
 ilp-node = { git = "https://github.com/interledger-rs/interledger-rs", branch = "rfc-update" }
 
 [features]
+default = ["redis"]
 redis = ["redis_crate", "interledger-settlement/redis", "interledger-settlement/backends_common"]
