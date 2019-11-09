@@ -117,8 +117,9 @@ fn test_send_erc20() {
 
     // 100 Gwei
     let ret = block_on(alice_engine.send_money(bob.id.to_string(), Quantity::new(100, 9))).unwrap();
-    assert_eq!(ret.0.as_u16(), 200);
-    assert_eq!(ret.1, "OK");
+    if let ApiResponse::Data(_) = ret {
+        panic!("expected empty default ret type for send money")
+    }
 
     // wait a few seconds so that the receiver's engine that does the polling
     std::thread::sleep(Duration::from_millis(2000));
@@ -207,8 +208,9 @@ fn test_send_eth() {
     // Connector sends an amount that's smaller than what the engine can
     // process, leftovers must be stored
     let ret = block_on(alice_engine.send_money(bob.id.to_string(), Quantity::new(9, 19))).unwrap();
-    assert_eq!(ret.0.as_u16(), 200);
-    assert_eq!(ret.1, "OK");
+    if let ApiResponse::Data(_) = ret {
+        panic!("expected empty default ret type for send money")
+    }
 
     // The leftovers must be set
     assert_eq!(
@@ -222,8 +224,9 @@ fn test_send_eth() {
     // the connector sends one more request, still less than the minimum amount,
     // but this puts the leftovers over the min amount for the next call
     let ret = block_on(alice_engine.send_money(bob.id.to_string(), Quantity::new(11, 20))).unwrap();
-    assert_eq!(ret.0.as_u16(), 200);
-    assert_eq!(ret.1, "OK");
+    if let ApiResponse::Data(_) = ret {
+        panic!("expected empty default ret type for send money")
+    }
 
     // The leftovers must be set
     assert_eq!(
@@ -235,8 +238,9 @@ fn test_send_eth() {
     );
 
     let ret = block_on(alice_engine.send_money(bob.id.to_string(), Quantity::new(100, 9))).unwrap();
-    assert_eq!(ret.0.as_u16(), 200);
-    assert_eq!(ret.1, "OK");
+    if let ApiResponse::Data(_) = ret {
+        panic!("expected empty default ret type for send money")
+    }
 
     // the remaining leftovers are correctly set
     assert_eq!(

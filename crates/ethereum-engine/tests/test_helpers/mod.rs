@@ -6,7 +6,7 @@ use interledger::{
 };
 
 #[cfg(feature = "redis")]
-use ethereum_engine::engine::{run_ethereum_engine, EthereumLedgerOpt};
+use ethereum_engine::engine::redis_bin::{run_ethereum_engine, EthereumLedgerOpt};
 
 #[cfg(feature = "redis")]
 pub mod redis_helpers;
@@ -79,8 +79,8 @@ pub fn start_xrp_engine(
         .expect("couldnt start xrp engine")
 }
 
-#[cfg(feature = "redis")]
 #[allow(unused)]
+#[cfg(feature = "redis")]
 pub fn start_eth_engine(
     db: ConnectionInfo,
     http_address: SocketAddr,
