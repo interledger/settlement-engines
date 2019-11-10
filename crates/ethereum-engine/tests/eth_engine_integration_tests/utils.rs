@@ -22,7 +22,7 @@ use ethereum_engine::engine::{
 use ethereum_engine::utils::types::{
     Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore,
 };
-use interledger_settlement::settlement_core::{
+use interledger_settlement::core::{
     idempotency::{IdempotentData, IdempotentStore},
     scale_with_precision_loss,
     types::{Convert, ConvertDetails, LeftoversStore},

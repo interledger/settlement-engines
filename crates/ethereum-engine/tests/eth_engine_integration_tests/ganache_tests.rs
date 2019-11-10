@@ -11,7 +11,7 @@ use web3::contract::{Contract, Options};
 use web3::{api::Web3, futures::future::Future, transports::Http, types::U256};
 
 use ethereum_engine::utils::types::{Addresses, EthereumStore};
-use interledger_settlement::settlement_core::types::{LeftoversStore, Quantity, SettlementEngine};
+use interledger_settlement::core::types::{LeftoversStore, Quantity, SettlementEngine};
 
 lazy_static! {
     pub static ref ALICE_PK: Secret<String> = Secret::new(String::from(

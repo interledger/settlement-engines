@@ -17,7 +17,7 @@ use redis_crate::{
 use log::{error, trace};
 use serde::Serialize;
 
-use interledger_settlement::settlement_core::{
+use interledger_settlement::core::{
     backends_common::redis::{EngineRedisStore, EngineRedisStoreBuilder},
     idempotency::{IdempotentData, IdempotentStore},
     types::LeftoversStore,
