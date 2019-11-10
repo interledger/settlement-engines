@@ -75,19 +75,6 @@ impl PaymentDetailsResponse {
     }
 }
 
-/// # Ethereum Ledger Settlement Engine
-///
-/// Settlement Engine compliant to [RFC536](https://github.com/interledger/rfcs/pull/536/)
-///
-/// The engine connects to an Ethereum node (over HTTP) as well as the connector. Its
-/// functions are exposed via the Settlement Engine API.
-///
-/// It requires a `confirmations` security parameter which is used to ensure
-/// that all transactions that get sent to the connector have sufficient
-/// confirmations (suggested value: >6)
-///
-/// All settlements made with this engine make on-chain Layer 1 Ethereum
-/// transactions. This engine DOES NOT support payment channels.
 #[derive(Debug, Clone)]
 pub struct EthereumLedgerSettlementEngine<S, Si, A> {
     store: S,
