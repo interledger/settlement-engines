@@ -14,11 +14,8 @@ tokio = "0.1.21"
 hyper = "0.12.31"
 futures = "0.1.25"
 interledger-service = "0.3.0"
-# need to pull from the same branch so that the ApiError type is from the same
-# exact version as the one in the SettlementEngine crate
-interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "rfc-update" }
-# no need to pull the whole crate, just get the settlement_core module
-interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "rfc-update", default-features = false  }
+interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
+interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master", default-features = false  }
 ethabi = "8.0.1"
 serde = { version = "1.0.101", default-features = false }
 serde_json = { version = "1.0.41", default-features = false }
@@ -58,8 +55,8 @@ parking_lot = "0.9.0"
 net2 = "0.2.33"
 os_type = "2.2.0"
 rand = "0.7.0"
-interledger = { git = "https://github.com/interledger-rs/interledger-rs", branch = "rfc-update" }
-ilp-node = { git = "https://github.com/interledger-rs/interledger-rs", branch = "rfc-update" }
+interledger = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
+ilp-node = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
 
 [features]
 default = ["redis"]
