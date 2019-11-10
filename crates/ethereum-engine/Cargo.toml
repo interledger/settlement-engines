@@ -16,11 +16,11 @@ futures = "0.1.25"
 interledger-service = "0.3.0"
 # need to pull from the same branch so that the ApiError type is from the same
 # exact version as the one in the SettlementEngine crate
-interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/settlement-core" }
+interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
 interledger-service-util = "0.3.0"
 interledger-ildcp = "0.3.0"
-# no need to pull the whole crate, just get the settlement_core module
-interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/settlement-core", default-features = false  }
+# no need to pull the whole crate, just get the core module
+interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master", default-features = false  }
 ethabi = "8.0.1"
 serde = { version = "1.0.101", default-features = false }
 serde_json = { version = "1.0.41", default-features = false }
@@ -64,4 +64,4 @@ interledger = { git = "https://github.com/interledger-rs/interledger-rs", branch
 ilp-node = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
 
 [features]
-redis = ["redis_crate", "interledger-settlement/redis"]
+redis = ["redis_crate", "interledger-settlement/redis", "interledger-settlement/backends_common"]

@@ -38,8 +38,8 @@ use web3::{
 };
 
 use interledger_http::error::*;
-use interledger_settlement::settlement_core::{
-    api::create_settlement_engine_filter,
+use interledger_settlement::core::{
+    engines_api::create_settlement_engine_filter,
     scale_with_precision_loss,
     types::{ApiResponse, LeftoversStore, Quantity, SettlementEngine, CONVERSION_ERROR_TYPE},
 };

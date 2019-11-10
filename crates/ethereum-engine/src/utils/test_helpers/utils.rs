@@ -15,7 +15,7 @@ use web3::{
 
 use crate::engine::{EthereumLedgerSettlementEngine, EthereumLedgerSettlementEngineBuilder};
 use crate::utils::types::{Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore};
-use interledger_settlement::settlement_core::{
+use interledger_settlement::core::{
     idempotency::{IdempotentData, IdempotentStore},
     scale_with_precision_loss,
     types::{Convert, ConvertDetails, LeftoversStore},
