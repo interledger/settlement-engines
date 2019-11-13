@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # intended to be run in the top directory
+docker_image_tag=${DOCKER_IMAGE_TAG:-latest}
 
 build_targets=()
 
@@ -24,7 +25,7 @@ build_targets+=($@)
 
 for build_target in "${build_targets[@]}"; do
     case $build_target in
-        "settlement-engines") docker build -f ./docker/settlement-engines.dockerfile -t interledgerrs/settlement-engines:latest \
+        "settlement-engines") docker build -f ./docker/settlement-engines.dockerfile -t interledgerrs/settlement-engines:${docker_image_tag} \
                 --build-arg CARGO_BUILD_OPTION="${CARGO_BUILD_OPTION}" \
                 --build-arg RUST_BIN_DIR_NAME="${RUST_BIN_DIR_NAME}" \
                 . ;;
