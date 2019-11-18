@@ -1,5 +1,5 @@
 [package]
-name = "ethereum-engine"
+name = "ilp-settlement-ethereum"
 description = "Ethereum L1 Settlement Engine for the Interledger Settlement Architecture"
 version = "0.1.0"
 authors = ["Georgios Konstantopoulos <me@gakonst.com>"]

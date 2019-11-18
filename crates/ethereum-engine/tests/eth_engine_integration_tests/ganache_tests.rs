@@ -10,7 +10,7 @@ use std::time::Duration;
 use web3::contract::{Contract, Options};
 use web3::{api::Web3, futures::future::Future, transports::Http, types::U256};
 
-use ethereum_engine::utils::types::{Addresses, EthereumStore};
+use ilp_settlement_ethereum::utils::types::{Addresses, EthereumStore};
 use interledger_settlement::core::types::{
     ApiResponse, LeftoversStore, Quantity, SettlementEngine,
 };
