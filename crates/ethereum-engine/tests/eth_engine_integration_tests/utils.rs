@@ -16,11 +16,9 @@ use web3::{
     types::{Address, H256, U256},
 };
 
-use ethereum_engine::engine::{
-    EthereumLedgerSettlementEngine, EthereumLedgerSettlementEngineBuilder,
-};
-use ethereum_engine::utils::types::{
-    Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore,
+use ilp_settlement_ethereum::{
+    engine::{EthereumLedgerSettlementEngine, EthereumLedgerSettlementEngineBuilder},
+    utils::types::{Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore},
 };
 use interledger_settlement::core::{
     idempotency::{IdempotentData, IdempotentStore},

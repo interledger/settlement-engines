@@ -6,7 +6,7 @@ use interledger::{
 };
 
 #[cfg(feature = "redis")]
-use ethereum_engine::engine::redis_bin::{run_ethereum_engine, EthereumLedgerOpt};
+use ilp_settlement_ethereum::engine::redis_bin::{run_ethereum_engine, EthereumLedgerOpt};
 
 #[cfg(feature = "redis")]
 pub mod redis_helpers;

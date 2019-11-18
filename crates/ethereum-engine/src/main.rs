@@ -9,7 +9,7 @@ use std::io::Read;
 use std::vec::Vec;
 
 #[cfg(feature = "redis")]
-use ethereum_engine::engine::redis_bin::{run_ethereum_engine, EthereumLedgerOpt};
+use ilp_settlement_ethereum::engine::redis_bin::{run_ethereum_engine, EthereumLedgerOpt};
 
 pub fn main() {
     env_logger::init();
