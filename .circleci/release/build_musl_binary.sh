@@ -26,10 +26,10 @@ docker run -dt --name builder "${docker_image_name}"
 
 docker cp ./Cargo.toml builder:/usr/src/Cargo.toml
 docker cp ./Cargo.lock builder:/usr/src/Cargo.lock
-docker cp ./src builder:/usr/src/src
+docker cp ./crates builder:/usr/src/crates
 
 # "--workdir" requires API version 1.35, but the Docker daemon API version of CircleCI is 1.32
-docker exec builder "/bin/bash" "-c" "cd /usr/src && cargo build --release --features \"ethereum\" --package \"${crate_name}\" --bin \"${crate_name}\" --target x86_64-unknown-linux-musl"
+docker exec builder "/bin/bash" "-c" "cd /usr/src && cargo build --release --package \"${crate_name}\" --bin \"${crate_name}\" --target x86_64-unknown-linux-musl"
 docker cp "builder:/usr/src/target/x86_64-unknown-linux-musl/release/${crate_name}" "${artifacts_path}"
 
 docker stop builder

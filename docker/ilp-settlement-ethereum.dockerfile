@@ -8,9 +8,9 @@ RUN echo "Building profile: ${CARGO_BUILD_OPTION}, output dir: ${RUST_BIN_DIR_NA
 WORKDIR /usr/src
 COPY ./Cargo.toml /usr/src/Cargo.toml
 COPY ./Cargo.lock /usr/src/Cargo.lock
-COPY ./src /usr/src/src
+COPY ./crates /usr/src/crates
 
-RUN cargo build ${CARGO_BUILD_OPTION} --features "ethereum" --package interledger-settlement-engines --bin interledger-settlement-engines
+RUN cargo build ${CARGO_BUILD_OPTION} --package ilp-settlement-ethereum --bin ilp-settlement-ethereum
 
 # Deploy compiled binary to another container
 FROM alpine
@@ -26,13 +26,13 @@ RUN apk --no-cache add ca-certificates
 
 # Copy binary
 COPY --from=rust \
-    /usr/src/target/x86_64-unknown-linux-musl/${RUST_BIN_DIR_NAME}/interledger-settlement-engines \
-    /usr/local/bin/interledger-settlement-engines
+    /usr/src/target/x86_64-unknown-linux-musl/${RUST_BIN_DIR_NAME}/ilp-settlement-ethereum \
+    /usr/local/bin/ilp-settlement-ethereum
 
 WORKDIR /opt/app
 
 # ENV RUST_BACKTRACE=1
 ENV RUST_LOG=interledger=debug
 
-ENTRYPOINT [ "/usr/local/bin/interledger-settlement-engines" ]
-CMD [ "ethereum-ledger" ]
+ENTRYPOINT [ "/usr/local/bin/ilp-settlement-ethereum" ]
+CMD [ ]
