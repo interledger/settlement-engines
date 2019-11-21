@@ -8,13 +8,13 @@
 # If no tag is given, it is considered as a `latest` (or possibly could be said `nightly`) build.
 # This script requires `jq`
 
-crate_name=$1 # currently not used, just make it consistent with `interledger-rs`
+crate_name=$1 # the name of the crate directory, not the name of the package written in Cargo.toml
 git_tag=$2
 
 if [ -n "$git_tag" ]; then
     # If it is a tag of semantic version expression
     if [[ "$git_tag" =~ ^.*v([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+[0-9A-Za-z-]+)?$ ]] ; then
-        cargo read-manifest --manifest-path Cargo.toml | jq -r .version
+        cargo read-manifest --manifest-path crates/${crate_name}/Cargo.toml | jq -r .version
     else
         printf "$git_tag"
     fi

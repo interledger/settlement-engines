@@ -17,7 +17,7 @@ fi
 
 if [ $# -eq 0 ]; then
     printf "\e[33mNo build target is given, building all targets.\e[m\n"
-    build_targets+=(settlement-engines)
+    build_targets+=(ilp-settlement-ethereum)
 fi
 
 # if arguments are given, add it as build targets
@@ -25,7 +25,7 @@ build_targets+=($@)
 
 for build_target in "${build_targets[@]}"; do
     case $build_target in
-        "settlement-engines") docker build -f ./docker/settlement-engines.dockerfile -t interledgerrs/settlement-engines:${docker_image_tag} \
+        "ilp-settlement-ethereum") docker build -f ./docker/ilp-settlement-ethereum.dockerfile -t interledgerrs/ilp-settlement-ethereum:${docker_image_tag} \
                 --build-arg CARGO_BUILD_OPTION="${CARGO_BUILD_OPTION}" \
                 --build-arg RUST_BIN_DIR_NAME="${RUST_BIN_DIR_NAME}" \
                 . ;;

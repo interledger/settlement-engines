@@ -76,8 +76,10 @@ jobs:
           # builds release profile images to be released
           name: Build Docker Images
           command: |
-            export DOCKER_IMAGE_TAG=$(./.circleci/release/get_docker_image_tag.sh interledger-settlement-engines ${CIRCLE_TAG})
-            docker/docker-build.sh settlement-engines
+            if [ "${CIRCLE_BRANCH}" = "master" ] || [[ "${CIRCLE_TAG}" =~ ^ilp-settlement-ethereum- ]]; then
+              export DOCKER_IMAGE_TAG=$(./.circleci/release/get_docker_image_tag.sh ethereum-engine ${CIRCLE_TAG})
+              docker/docker-build.sh ilp-settlement-ethereum
+            fi
           environment:
             PROFILE: "release"
       - run:
@@ -85,9 +87,11 @@ jobs:
           command: |
             echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
 
-            DOCKER_IMAGE_TAG=$(./.circleci/release/get_docker_image_tag.sh interledger-settlement-engines ${CIRCLE_TAG})
-            echo "Pushing docker image of tag: interledgerrs/settlement-engines:${DOCKER_IMAGE_TAG}"
-            docker push interledgerrs/settlement-engines:${DOCKER_IMAGE_TAG}
+            if [ "${CIRCLE_BRANCH}" = "master" ] || [[ "${CIRCLE_TAG}" =~ ^ilp-settlement-ethereum- ]]; then
+              DOCKER_IMAGE_TAG=$(./.circleci/release/get_docker_image_tag.sh ethereum-engine ${CIRCLE_TAG})
+              echo "Pushing docker image of tag: interledgerrs/ilp-settlement-ethereum:${DOCKER_IMAGE_TAG}"
+              docker push interledgerrs/ilp-settlement-ethereum:${DOCKER_IMAGE_TAG}
+            fi
   build-release-binary-linux:
     docker:
       - image: circleci/rust
@@ -129,7 +133,7 @@ jobs:
           command: |
             crate_name=$(./.circleci/release/get_crate_name.sh ${CIRCLE_TAG})
             printf "Building crate_name: %s, tag: %s\n" "${crate_name}" "${CIRCLE_TAG}"
-            cargo build --release --features "ethereum" --package "${crate_name}" --bin "${crate_name}" --target x86_64-apple-darwin
+            cargo build --release --package "${crate_name}" --bin "${crate_name}" --target x86_64-apple-darwin
             mkdir -p /tmp/release-builds/x86_64-apple-darwin
             cp target/x86_64-apple-darwin/release/${crate_name} /tmp/release-builds/x86_64-apple-darwin/${crate_name}
       - persist_to_workspace:
@@ -211,7 +215,7 @@ jobs:
 
             # latest release, only if on the master branch
             # tag the current commit as (crate_name)-latest, and release it
-            if [ "${CIRCLE_TAG}" == "master" ]; then
+            if [ "${CIRCLE_BRANCH}" == "master" ]; then
               tag_name="${crate_name}-latest"
               LOG_DIR=logs/${tag_name} ./.circleci/release/github_tag.sh \
                 ${tag_name} \
@@ -247,7 +251,7 @@ workflows:
                 - master
             tags:
               only: # whatever tagged binary crates
-                - /^(interledger-settlement-engines-|v).*$/
+                - /^(ilp-settlement-ethereum-|v).*$/
           requires:
             - build
       - build-release-binary-linux:
@@ -257,7 +261,7 @@ workflows:
                 - /.*/
             tags:
               only: # whatever tagged binary crates
-                - /^(interledger-settlement-engines-|v).*$/
+                - /^(ilp-settlement-ethereum-|v).*$/
           requires:
             - build
       - build-release-binary-darwin:
@@ -267,7 +271,7 @@ workflows:
                 - /.*/
             tags:
               only: # whatever tagged binary crates
-                - /^(interledger-settlement-engines-|v).*$/
+                - /^(ilp-settlement-ethereum-|v).*$/
           requires:
             - build
       - release-binaries:
@@ -277,7 +281,7 @@ workflows:
                 - /.*/
             tags:
               only: # whatever tagged binary crates
-                - /^(interledger-settlement-engines-|v).*$/
+                - /^(ilp-settlement-ethereum-|v).*$/
           requires:
             - build-release-binary-linux
             - build-release-binary-darwin

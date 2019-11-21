@@ -6,8 +6,6 @@
 # The regex means "(something)-(semantic version)"
 if [[ $1 =~ ^(.*)-v([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+[0-9A-Za-z-]+)?$ ]]; then
     echo ${BASH_REMATCH[1]}
-elif [[ $1 =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+[0-9A-Za-z-]+)?$ ]]; then
-    echo "interledger-settlement-engines"
-elif [[ $1 =~ ^interledger-settlement-engines-.*$ ]]; then
-    echo "interledger-settlement-engines"
+elif [[ $1 =~ ^ilp-settlement-ethereum-.*$ ]]; then
+    echo "ilp-settlement-ethereum"
 fi
