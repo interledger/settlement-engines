@@ -618,7 +618,15 @@ where
                         // between 50-70k)
                         // This call will fail on Geth nodes until
                         // https://github.com/ethereum/go-ethereum/issues/2586 is fixed
-                        Ok(amount) => amount,
+                        Ok(amount) => {
+                            // Cap the amount to avoid users performing a GasToken attack,
+                            // https://medium.com/level-k/public-disclosure-malicious-gastoken-minting-236b2f8ace38
+                            if amount > U256::from(100_000) {
+                                U256::from(100_000)
+                            } else {
+                                amount
+                            }
+                        }
                         Err(_) => U256::from(100_000),
                     })
                 }),
@@ -893,9 +901,9 @@ where
         &self,
         _account_id: String, // A more sophisticated engine could generate addresses on the fly per account, similar to exchanges
     ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
-        return Box::new(ok(ApiResponse::Data(Bytes::from(
+        Box::new(ok(ApiResponse::Data(Bytes::from(
             json!(self.address).to_string(),
-        ))));
+        ))))
     }
 
     // Deletes an account from the engine
