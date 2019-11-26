@@ -14,8 +14,8 @@ tokio = "0.1.21"
 hyper = "0.12.31"
 futures = "0.1.25"
 interledger-service = "0.3.0"
-interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
-interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master", default-features = false  }
+interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/deposit-withdraw" }
+interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/deposit-withdraw", default-features = false  }
 ethabi = "8.0.1"
 serde = { version = "1.0.101", default-features = false }
 serde_json = { version = "1.0.41", default-features = false }
@@ -55,8 +55,8 @@ parking_lot = "0.9.0"
 net2 = "0.2.33"
 os_type = "2.2.0"
 rand = "0.7.0"
-interledger = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
-ilp-node = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
+interledger = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/deposit-withdraw" }
+ilp-node = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/deposit-withdraw" }
 
 [features]
 default = ["redis"]
