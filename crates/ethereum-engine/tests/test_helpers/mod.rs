@@ -2,7 +2,7 @@ use futures::{stream::Stream, Future};
 use interledger::{
     packet::Address,
     service::Account as AccountTrait,
-    store_redis::{Account, AccountId},
+    store::account::{Account, AccountId},
 };
 
 #[cfg(feature = "redis")]
@@ -97,7 +97,7 @@ pub fn start_eth_engine(
         chain_id: 1,
         confirmations: 0,
         asset_scale: 18,
-        poll_frequency: 1000,
+        poll_frequency: 500,
         watch_incoming: true,
     })
 }
