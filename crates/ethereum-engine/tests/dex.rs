@@ -185,6 +185,7 @@ fn dex() {
         "settlement_api_bind_address": format!("127.0.0.1:{}", node2_settlement),
         "secret_seed": random_secret(),
         "route_broadcast_interval": 200,
+        "exchange_rate_spread": 0.01, // operator 2 takes 1% of volume as fees.
     }))
     .unwrap();
 
@@ -385,16 +386,16 @@ fn dex() {
                     assert_eq!(balances[0], 5_000_000);
                     // Operator 1 owes operator 2 950k sats (900 went to the next node, 50 went to this node)
                     assert_eq!(balances[1], 950_000);
-                    // Charlie2 has 50k drops
-                    assert_eq!(balances[2], 50_000);
+                    // Charlie2 has 49.5k drops (op2 took a cut)
+                    assert_eq!(balances[2], 49_500);
                     // Operator 1 owes operator 2 950k sats (symmetric to balances[1] but on node2 instead of node1)
                     assert_eq!(balances[3], -950_000);
                     // Operator 2 owes operator 3 900k sats (on node 2 so it's negative)
-                    assert_eq!(balances[4], 900_000);
-                    // Operator 2 owes operator 3 900k sats (on node 3 so it's negative)
-                    assert_eq!(balances[5], -900_000);
-                    // Charlie3 has 0.9 ETH
-                    assert_eq!(balances[6], 90_000_000);
+                    assert_eq!(balances[4], 891_000);
+                    // Operator 2 owes operator 3 891k sats (on node 3 so it's negative)
+                    assert_eq!(balances[5], -891_000);
+                    // Charlie3 has 0.891 ETH
+                    assert_eq!(balances[6], 89_100_000);
                     Ok(())
                 })
                 // example.op3.charlie wants to withdraw some ETH
@@ -404,12 +405,12 @@ fn dex() {
                 .and_then(move |balances| {
                     assert_eq!(balances[0], 5_000_000);
                     assert_eq!(balances[1], 950_000);
-                    assert_eq!(balances[2], 50_000); // remember, this is xrp drops
+                    assert_eq!(balances[2], 49_500); // remember, this is xrp drops
                     assert_eq!(balances[3], -950_000);
-                    assert_eq!(balances[4], 900_000);
-                    assert_eq!(balances[5], -900_000);
+                    assert_eq!(balances[4], 891_000);
+                    assert_eq!(balances[5], -891_000);
                     // Charlie's balance has been updated due to the withdrawal
-                    assert_eq!(balances[6], 5_000_000);
+                    assert_eq!(balances[6], 4_100_000);
                     let (eloop, transport) = Http::new("http://localhost:8545").unwrap();
                     eloop.into_remote();
                     let web3 = Web3::new(transport);
