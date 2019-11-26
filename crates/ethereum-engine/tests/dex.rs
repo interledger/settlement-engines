@@ -25,7 +25,7 @@ use web3::{
 #[cfg(feature = "redis")]
 use test_helpers::{redis_helpers::*, start_eth_engine};
 
-// Alice, Bob and Charlie are 3 users who transact in XRP, ETH and ETH respectively.
+// Alice, Charlie and Charlie' (added same username to show that the system has no issue with overlapping usernames) are users of the ILP network
 // They each are connected to a separate connector. The 3 connectors are connected in a Peer-Peer / Parent-Child relationship.
 // As a result, Alice corresponds to example.op1.alice, Bob to example.op2.bob, and Charlie to example.op2.op3.charlie
 // Alice is required to prepay from her connector in order to make any payment. She queries the new /deposit endpoint and obtains
@@ -205,14 +205,13 @@ fn dex() {
         "routing_relation": "Peer",
     });
     let op3_on_op2 = json!({
-        "ilp_address": "example.op3",
         "username": "op3",
         "asset_code": "BTC",
         "asset_scale": 8,
         "ilp_over_http_url": format!("http://localhost:{}/ilp", node3_http),
         "ilp_over_http_incoming_token" : "op3_password",
         "ilp_over_http_outgoing_token" : "op2:op2_password",
-        "routing_relation": "Peer",
+        "routing_relation": "Child",
     });
     let charlie_on_op2 = json!({
         "username": "charlie",
@@ -242,7 +241,6 @@ fn dex() {
     );
 
     let node3: InterledgerNode = serde_json::from_value(json!({
-        "ilp_address": "example.op3",
         "admin_auth_token": "admin",
         "redis_connection": connection_info_to_string(connection_info3),
         "http_bind_address": format!("127.0.0.1:{}", node3_http),
@@ -259,7 +257,7 @@ fn dex() {
         "ilp_over_http_url": format!("http://localhost:{}/ilp", node2_http),
         "ilp_over_http_incoming_token" : "op2_password",
         "ilp_over_http_outgoing_token" : "op3:op3_password",
-        "routing_relation": "Peer",
+        "routing_relation": "Parent",
     });
     let charlie_on_op3 = json!({
         "username": "charlie",
@@ -271,7 +269,8 @@ fn dex() {
         "settlement_extra" : node3_charlie_addr,
     });
     let op3_fut = create_account_on_node(node3_http, op2_on_op3, "admin")
-        .join(create_account_on_node(node3_http, charlie_on_op3, "admin"))
+        .and_then(move |_| delay(2000)) // give it some time to update its ilp address for its followup children
+        .and_then(move |_| create_account_on_node(node3_http, charlie_on_op3, "admin"))
         .join(rates(node3_http, "admin"));
     runtime.spawn(
         node3_eth_engine_fut
