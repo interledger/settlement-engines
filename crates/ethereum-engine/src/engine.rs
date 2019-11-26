@@ -3,6 +3,7 @@ use super::utils::{
     web3::{filter_transfer_logs, make_tx, sent_to_us, ERC20Transfer, EthAddress},
 };
 
+use bytes::Bytes;
 use clarity::Signature;
 use log::{debug, error, trace};
 use parking_lot::RwLock;
@@ -40,7 +41,10 @@ use interledger_http::error::*;
 use interledger_settlement::core::{
     engines_api::create_settlement_engine_filter,
     scale_with_precision_loss,
-    types::{ApiResponse, LeftoversStore, Quantity, SettlementEngine, CONVERSION_ERROR_TYPE},
+    types::{
+        ApiResponse, CreateAccount, LeftoversStore, Quantity, SettlementEngine,
+        CONVERSION_ERROR_TYPE,
+    },
 };
 use secrecy::Secret;
 
@@ -483,28 +487,30 @@ where
                 .and_then(move |tx| {
                     if let Some((from, amount)) = sent_to_us(tx, our_address) {
                         trace!("Got transaction for our account from {} for amount {}", from, amount);
-                    if amount > U256::from(0) {
-                        // if the tx was for us and had some non-0 amount, then let
-                        // the connector know
-                        let addr = Addresses {
-                            own_address: from,
-                            token_address: None,
-                        };
-
-                        return Either::A(store.load_account_id_from_address(addr)
-                        .and_then(move |id| {
-                            self_clone.notify_connector(id.to_string(), amount.to_string(), tx_hash)
-                        })
-                        .and_then(move |_| {
-                            // only save the transaction hash if the connector
-                            // was successfully notified
-                            store.mark_tx_processed(tx_hash)
-                                }));
-
-                            }
+                        if amount > U256::from(0) {
+                            debug!("WILL NOTIFY CONNECTOR");
+                            // if the tx was for us and had some non-0 amount, then let
+                            // the connector know
+                            let addr = Addresses {
+                                own_address: from,
+                                token_address: None,
+                            };
+                            return Either::A(
+                                store.load_account_id_from_address(addr)
+                                .map_err(move |_| error!("Could not fetch account id which corresponds to address {:?}", addr))
+                                .and_then(move |id| {
+                                    self_clone.notify_connector(id.to_string(), amount.to_string(), tx_hash)
+                                })
+                                .and_then(move |_| {
+                                    // only save the transaction hash if the connector
+                                    // was successfully notified
+                                    store.mark_tx_processed(tx_hash)
+                                })
+                            );
                         }
-                        // Ignore this transaction if it wasn't for us or was for a zero amount
-                        Either::B(ok(()))
+                    }
+                    // Ignore this transaction if it wasn't for us or was for a zero amount
+                    Either::B(ok(()))
                 }))
             } else {
                 Either::B(ok(())) // return an empty future otherwise since we want to skip this transaction
@@ -704,139 +710,192 @@ where
     /// the store.
     fn create_account(
         &self,
-        account_id: String,
+        create_account_request: CreateAccount,
     ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
         let self_clone = self.clone();
         let store: S = self.store.clone();
         let signer = self.signer.clone();
         let address = self.address;
 
-        // We make a POST request to OUR connector's `messages`
-        // endpoint. This will in turn send an outgoing
-        // request to its peer connector, which will ask its
-        // own engine about its settlement information. Then,
-        // we store that information and use it when
-        // performing settlements.
-        let idempotency_uuid = Uuid::new_v4().to_hyphenated().to_string();
-        let challenge = Uuid::new_v4().to_hyphenated().to_string();
-        let challenge = challenge.into_bytes();
-        let challenge_clone = challenge.clone();
-        let client = Client::new();
-        let mut url = self_clone.connector_url.clone();
-
-        // send a payment details request (we send them a challenge)
-        url.path_segments_mut()
-            .expect("Invalid connector URL")
-            .push("accounts")
-            .push(&account_id.to_string())
-            .push("messages");
-        let body =
-            serde_json::to_string(&PaymentDetailsRequest::new(challenge_clone.clone())).unwrap();
-        let url_clone = url.clone();
-        let action = move || {
-            client
-                .post(url.as_ref())
-                .header("Content-Type", "application/octet-stream")
-                .header("Idempotency-Key", idempotency_uuid.clone())
-                .body(body.clone())
-                .send()
-        };
-
-        Box::new(
-            Retry::spawn(
-                ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
-                action,
+        // if extra data was provided, the node operator provided the account's address
+        // and as a result there is no need to fetch it from the peer.
+        // this is expected to happen in the case where the added account is just a client
+        // and is not running an ilp node or engine
+        if let Some(extra) = create_account_request.extra {
+            // strip 0x prefix
+            let unprefixed = if extra.starts_with("0x") {
+                &extra[2..]
+            } else {
+                &extra
+            };
+            // convert to hex and then return the Address type
+            let address = match Address::from_str(&unprefixed) {
+                Ok(addr) => addr,
+                Err(_err) => {
+                    let error_msg = format!("Could not parse provided extra. Error: {}", _err);
+                    error!("{}", error_msg);
+                    return Box::new(err(ApiError::bad_request().detail(error_msg)));
+                }
+            };
+            let data = HashMap::from_iter(vec![(
+                create_account_request.id,
+                Addresses {
+                    own_address: address,
+                    token_address: self.address.token_address,
+                },
+            )]);
+            Box::new(
+                store
+                    .save_account_addresses(data)
+                    .map_err(move |err| {
+                        let error_msg = format!("Couldn't connect to store {:?}", err);
+                        error!("{}", error_msg);
+                        ApiError::internal_server_error().detail(error_msg)
+                    })
+                    .and_then(move |_| Ok(ApiResponse::Default)),
             )
-            .map_err(move |err| {
-                let err = format!("Couldn't notify connector {:?}", err);
-                error!("{}", err);
-                ApiError::internal_server_error().detail(err)
-            })
-            .and_then(move |resp| {
-                parse_body_into_payment_details(resp).and_then(move |payment_details| {
-                    let data = prefixed_message(challenge_clone);
-                    let challenge_hash = Sha3::digest(&data);
-                    let recovered_address = payment_details.signature.recover(&challenge_hash);
-                    trace!("Received payment details {:?}", payment_details);
-                    match recovered_address {
-                        Ok(recovered_address) => {
-                            if recovered_address.as_bytes()
-                                != &payment_details.to.own_address.as_bytes()[..]
-                            {
-                                let error_msg = format!(
-                                    "Recovered address did not match: {:?}. Expected {:?}",
-                                    recovered_address.to_string(),
-                                    payment_details.to
-                                );
+        } else {
+            // try to get the address from the peer
+            let account_id = create_account_request.id;
+
+            // We make a POST request to OUR connector's `messages`
+            // endpoint. This will in turn send an outgoing
+            // request to its peer connector, which will ask its
+            // own engine about its settlement information. Then,
+            // we store that information and use it when
+            // performing settlements.
+            let idempotency_uuid = Uuid::new_v4().to_hyphenated().to_string();
+            let challenge = Uuid::new_v4().to_hyphenated().to_string();
+            let challenge = challenge.into_bytes();
+            let challenge_clone = challenge.clone();
+            let client = Client::new();
+            let mut url = self_clone.connector_url.clone();
+
+            // send a payment details request (we send them a challenge)
+            url.path_segments_mut()
+                .expect("Invalid connector URL")
+                .push("accounts")
+                .push(&account_id.to_string())
+                .push("messages");
+            let body = serde_json::to_string(&PaymentDetailsRequest::new(challenge_clone.clone()))
+                .unwrap();
+            let url_clone = url.clone();
+            let action = move || {
+                client
+                    .post(url.as_ref())
+                    .header("Content-Type", "application/octet-stream")
+                    .header("Idempotency-Key", idempotency_uuid.clone())
+                    .body(body.clone())
+                    .send()
+            };
+
+            Box::new(
+                Retry::spawn(
+                    ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
+                    action,
+                )
+                .map_err(move |err| {
+                    let err = format!("Couldn't notify connector {:?}", err);
+                    error!("{}", err);
+                    ApiError::internal_server_error().detail(err)
+                })
+                .and_then(move |resp| {
+                    parse_body_into_payment_details(resp).and_then(move |payment_details| {
+                        let data = prefixed_message(challenge_clone);
+                        let challenge_hash = Sha3::digest(&data);
+                        let recovered_address = payment_details.signature.recover(&challenge_hash);
+                        trace!("Received payment details {:?}", payment_details);
+                        match recovered_address {
+                            Ok(recovered_address) => {
+                                if recovered_address.as_bytes()
+                                    != &payment_details.to.own_address.as_bytes()[..]
+                                {
+                                    let error_msg = format!(
+                                        "Recovered address did not match: {:?}. Expected {:?}",
+                                        recovered_address.to_string(),
+                                        payment_details.to
+                                    );
+                                    error!("{}", error_msg);
+                                    return Either::A(err(
+                                        ApiError::internal_server_error().detail(error_msg)
+                                    ));
+                                }
+                            }
+                            Err(error_msg) => {
+                                let error_msg =
+                                    format!("Could not recover address {:?}", error_msg);
                                 error!("{}", error_msg);
                                 return Either::A(err(
                                     ApiError::internal_server_error().detail(error_msg)
                                 ));
                             }
-                        }
-                        Err(error_msg) => {
-                            let error_msg = format!("Could not recover address {:?}", error_msg);
-                            error!("{}", error_msg);
-                            return Either::A(err(
-                                ApiError::internal_server_error().detail(error_msg)
-                            ));
-                        }
-                    };
-
-                    // ACK BACK
-                    if let Some(challenge) = payment_details.challenge {
-                        // if we were challenged, we must respond
-                        let data = prefixed_message(challenge);
-                        let signature = signer.sign_message(&data);
-                        let resp = {
-                            // Respond with our address, a signature,
-                            // and no challenge, since we already sent
-                            // them one earlier
-                            let ret = PaymentDetailsResponse::new(address, signature, None);
-                            serde_json::to_string(&ret).unwrap()
-                        };
-                        let idempotency_uuid = Uuid::new_v4().to_hyphenated().to_string();
-                        let client = Client::new();
-                        let action = move || {
-                            client
-                                .post(url_clone.as_ref())
-                                .header("Content-Type", "application/octet-stream")
-                                .header("Idempotency-Key", idempotency_uuid.clone())
-                                .body(resp.clone())
-                                .send()
-                                .map_err(|err| error!("{}", err))
-                                .and_then(move |_| Ok(()))
                         };
 
-                        tokio::executor::spawn(
-                            Retry::spawn(
-                                ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
-                                action,
-                            )
-                            .map_err(|err| error!("{:?}", err)),
-                        );
-                    }
+                        // ACK BACK
+                        if let Some(challenge) = payment_details.challenge {
+                            // if we were challenged, we must respond
+                            let data = prefixed_message(challenge);
+                            let signature = signer.sign_message(&data);
+                            let resp = {
+                                // Respond with our address, a signature,
+                                // and no challenge, since we already sent
+                                // them one earlier
+                                let ret = PaymentDetailsResponse::new(address, signature, None);
+                                serde_json::to_string(&ret).unwrap()
+                            };
+                            let idempotency_uuid = Uuid::new_v4().to_hyphenated().to_string();
+                            let client = Client::new();
+                            let action = move || {
+                                client
+                                    .post(url_clone.as_ref())
+                                    .header("Content-Type", "application/octet-stream")
+                                    .header("Idempotency-Key", idempotency_uuid.clone())
+                                    .body(resp.clone())
+                                    .send()
+                                    .map_err(|err| error!("{}", err))
+                                    .and_then(move |_| Ok(()))
+                            };
 
-                    let data = HashMap::from_iter(vec![(account_id, payment_details.to)]);
+                            tokio::executor::spawn(
+                                Retry::spawn(
+                                    ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
+                                    action,
+                                )
+                                .map_err(|err| error!("{:?}", err)),
+                            );
+                        }
 
-                    Either::B(
-                        store
-                            .save_account_addresses(data)
-                            .map_err(move |err| {
-                                let err_type = ApiErrorType {
-                                    r#type: &ProblemType::Default,
-                                    title: "Store connection error",
-                                    status: StatusCode::BAD_REQUEST,
-                                };
-                                let err = format!("Couldn't connect to store {:?}", err);
-                                error!("{}", err);
-                                ApiError::from_api_error_type(&err_type).detail(err)
-                            })
-                            .and_then(move |_| Ok(ApiResponse::Default)),
-                    )
-                })
-            }),
-        )
+                        let data = HashMap::from_iter(vec![(account_id, payment_details.to)]);
+
+                        Either::B(
+                            store
+                                .save_account_addresses(data)
+                                .map_err(move |err| {
+                                    let err_type = ApiErrorType {
+                                        r#type: &ProblemType::Default,
+                                        title: "Store connection error",
+                                        status: StatusCode::BAD_REQUEST,
+                                    };
+                                    let err = format!("Couldn't connect to store {:?}", err);
+                                    error!("{}", err);
+                                    ApiError::from_api_error_type(&err_type).detail(err)
+                                })
+                                .and_then(move |_| Ok(ApiResponse::Default)),
+                        )
+                    })
+                }),
+            )
+        }
+    }
+
+    // Returns the Engine's Address and ERC20 token contract (if not using ETH)
+    fn get_payment_info(
+        &self,
+        _account_id: String, // A more sophisticated engine could generate addresses on the fly per account, similar to exchanges
+    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
+        return Box::new(ok(ApiResponse::Data(Bytes::from(
+            json!(self.address).to_string(),
+        ))));
     }
 
     // Deletes an account from the engine
@@ -1174,6 +1233,62 @@ mod tests {
             "cc96601bc52293b53c4736a12af9130abf347669b3813f9ec4cafdf6991b087e"
         ));
     }
+
+    #[test]
+    fn test_create_get_account_with_extra() {
+        let bob: TestAccount = BOB.clone();
+        let store = test_store(bob.clone(), false, false, false);
+        let engine = test_engine(
+            store.clone(),
+            ALICE_PK.clone(),
+            0,
+            "localhost:7770",
+            None,
+            false,
+        );
+
+        // fails if it does not have a valid length
+        block_on(engine.create_account(CreateAccount {
+            id: "1".to_string(),
+            extra: Some("123".to_string()),
+        }))
+        .unwrap_err();
+
+        let addr = "0x3cdb3d9e1b74692bb1e3bb5fc81938151ca64b02";
+        block_on(engine.create_account(CreateAccount {
+            id: "1".to_string(),
+            extra: Some(addr.to_string()),
+        }))
+        .unwrap();
+
+        // works with unprefixed strings also
+        let addr2 = "4cdb3d9e1b74692bb1e3bb5fc81938151ca64b02";
+        block_on(engine.create_account(CreateAccount {
+            id: "2".to_string(),
+            extra: Some(addr2.to_string()),
+        }))
+        .unwrap();
+
+        let addrs = store
+            .load_account_addresses(vec!["1".to_string(), "2".to_string()])
+            .wait()
+            .unwrap();
+        assert_eq!(
+            addrs[0],
+            Addresses {
+                own_address: Address::from_str(&addr[2..]).unwrap(),
+                token_address: None
+            }
+        );
+        assert_eq!(
+            addrs[1],
+            Addresses {
+                own_address: Address::from_str(addr2).unwrap(),
+                token_address: None
+            }
+        );
+    }
+
     #[test]
     fn test_create_get_account() {
         let bob: TestAccount = BOB.clone();
@@ -1216,7 +1331,11 @@ mod tests {
         // the signed message does not match.
         // (We are not able to make Mockito capture the challenge and return a
         // signature on it.)
-        let ret: ApiError = block_on(engine.create_account(bob.id)).unwrap_err();
+        let ret: ApiError = block_on(engine.create_account(CreateAccount {
+            id: bob.id,
+            extra: None,
+        }))
+        .unwrap_err();
         assert_eq!(ret.status.as_u16(), 500);
         let error_msg = ret.detail.unwrap();
         assert!(error_msg.starts_with("Recovered address did not match:"));
