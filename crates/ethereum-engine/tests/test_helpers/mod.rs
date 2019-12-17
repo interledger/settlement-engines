@@ -2,8 +2,9 @@ use futures::{stream::Stream, Future};
 use interledger::{
     packet::Address,
     service::Account as AccountTrait,
-    store_redis::{Account, AccountId},
+    store::account::Account,
 };
+use uuid::Uuid;
 
 #[cfg(feature = "redis")]
 use ilp_settlement_ethereum::engine::redis_bin::{run_ethereum_engine, EthereumLedgerOpt};
@@ -218,7 +219,7 @@ pub fn get_all_accounts(
 }
 
 #[allow(unused)]
-pub fn accounts_to_ids(accounts: Vec<Account>) -> HashMap<Address, AccountId> {
+pub fn accounts_to_ids(accounts: Vec<Account>) -> HashMap<Address, Uuid> {
     let mut map = HashMap::new();
     for a in accounts {
         map.insert(a.ilp_address().clone(), a.id());
