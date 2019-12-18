@@ -1,9 +1,5 @@
 use futures::{stream::Stream, Future};
-use interledger::{
-    packet::Address,
-    service::Account as AccountTrait,
-    store::account::Account,
-};
+use interledger::{packet::Address, service::Account as AccountTrait, store::account::Account};
 use uuid::Uuid;
 
 #[cfg(feature = "redis")]

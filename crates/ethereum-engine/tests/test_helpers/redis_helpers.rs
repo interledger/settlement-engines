@@ -21,7 +21,9 @@ use tokio::timer::Delay;
 pub fn connection_info_to_string(info: ConnectionInfo) -> String {
     match info.addr.as_ref() {
         ConnectionAddr::Tcp(url, port) => format!("redis://{}:{}/{}", url, port, info.db),
-        ConnectionAddr::Unix(path) => format!("redis+unix:{}?db={}", path.to_str().unwrap(), info.db),
+        ConnectionAddr::Unix(path) => {
+            format!("redis+unix:{}?db={}", path.to_str().unwrap(), info.db)
+        }
     }
 }
 
