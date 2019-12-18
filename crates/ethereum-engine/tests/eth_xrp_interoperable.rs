@@ -14,6 +14,7 @@ mod test_helpers;
 use test_helpers::{
     accounts_to_ids, create_account_on_node, get_all_accounts, get_balance, random_secret,
     send_money_to_username, set_node_settlement_engines, start_ganache, start_xrp_engine,
+    BalanceData,
 };
 
 #[cfg(feature = "redis")]
@@ -94,7 +95,7 @@ fn eth_xrp_interoperable() {
     let node1: InterledgerNode = serde_json::from_value(json!({
         "ilp_address": "example.alice",
         "admin_auth_token": "admin",
-        "redis_connection": connection_info_to_string(connection_info1),
+        "database_url": connection_info_to_string(connection_info1),
         "http_bind_address": format!("127.0.0.1:{}", node1_http),
         "settlement_api_bind_address": format!("127.0.0.1:{}", node1_settlement),
         "secret_seed": random_secret(),
@@ -138,7 +139,7 @@ fn eth_xrp_interoperable() {
     let node2: InterledgerNode = serde_json::from_value(json!({
         "ilp_address": "example.bob",
         "admin_auth_token": "admin",
-        "redis_connection": connection_info_to_string(connection_info2),
+        "database_url": connection_info_to_string(connection_info2),
         "http_bind_address": format!("127.0.0.1:{}", node2_http),
         "settlement_api_bind_address": format!("127.0.0.1:{}", node2_settlement),
         "secret_seed": random_secret(),
@@ -216,7 +217,7 @@ fn eth_xrp_interoperable() {
 
     let node3: InterledgerNode = serde_json::from_value(json!({
         "admin_auth_token": "admin",
-        "redis_connection": connection_info_to_string(connection_info3),
+        "database_url": connection_info_to_string(connection_info3),
         "http_bind_address": format!("127.0.0.1:{}", node3_http),
         "settlement_api_bind_address": format!("127.0.0.1:{}", node3_settlement),
         "secret_seed": random_secret(),
@@ -268,8 +269,13 @@ fn eth_xrp_interoperable() {
                                 get_balance("bob", node3_http, "bob_password"),
                             ])
                             .and_then(move |balances| {
-                                    // Alice has paid Charlie in total 70k Gwei through Bob.
-                                    assert_eq!(balances[0], -70000);
+                                    assert_eq!(
+                                        balances[0],
+                                        BalanceData {
+                                            asset_code: "ETH".to_owned(),
+                                            balance: -70000e-9
+                                        }
+                                    );
                                     // Since Alice has configured Bob's
                                     // `settle_threshold` and `settle_to` to be
                                     // 70k and 10k respectively, once she
@@ -278,10 +284,22 @@ fn eth_xrp_interoperable() {
                                     // settles down to 10k.
                                     // From her perspective, Bob's account has a
                                     // positive 10k balance since she owes him money.
-                                    assert_eq!(balances[1], 10000);
+                                    assert_eq!(
+                                        balances[1],
+                                        BalanceData {
+                                            asset_code: "ETH".to_owned(),
+                                            balance: 10000e-9
+                                        }
+                                    );
                                     // From Bob's perspective, Alice's account
                                     // has a negative sign since he is owed money.
-                                    assert_eq!(balances[2], -10000);
+                                    assert_eq!(
+                                        balances[2],
+                                        BalanceData {
+                                            asset_code: "ETH".to_owned(),
+                                            balance: -10000e-9
+                                        }
+                                    );
                                     // As Bob forwards money to Charlie, he also
                                     // eventually exceeds the `settle_threshold`
                                     // which incidentally is set to 70k. As a
@@ -289,12 +307,30 @@ fn eth_xrp_interoperable() {
                                     // settlement of 65k Drops to get his debt
                                     // back to the `settle_to` value of charlie,
                                     // which is 5k (70k - 5k = 65k).
-                                    assert_eq!(balances[3], 5000);
+                                    assert_eq!(
+                                        balances[3],
+                                        BalanceData {
+                                            asset_code: "XRP".to_owned(),
+                                            balance: 5000e-6
+                                        }
+                                    );
                                     // Charlie's balance indicates that he's
                                     // received 70k drops (the total amount Alice sent him)
-                                    assert_eq!(balances[4], 70000);
+                                    assert_eq!(
+                                        balances[4],
+                                        BalanceData {
+                                            asset_code: "XRP".to_owned(),
+                                            balance: 70000e-6
+                                        }
+                                    );
                                     // And he sees is owed 5k by Bob.
-                                    assert_eq!(balances[5], -5000);
+                                    assert_eq!(
+                                        balances[5],
+                                        BalanceData {
+                                            asset_code: "XRP".to_owned(),
+                                            balance: -5000e-6
+                                        }
+                                    );
 
                                     node2_engine_redis.kill().unwrap();
                                     node3_engine_redis.kill().unwrap();

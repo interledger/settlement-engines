@@ -15,7 +15,7 @@ use tokio::runtime::Builder as RuntimeBuilder;
 mod test_helpers;
 use test_helpers::{
     accounts_to_ids, create_account_on_engine, get_all_accounts, get_balance, random_secret,
-    send_money_to_username, start_ganache,
+    send_money_to_username, start_ganache, BalanceData,
 };
 
 #[cfg(feature = "redis")]
@@ -63,9 +63,19 @@ fn eth_ledger_settlement() {
     let node1: InterledgerNode = serde_json::from_value(json!({
         "ilp_address": "example.alice",
         "admin_auth_token": "admin",
-        "redis_connection": connection_info_to_string(connection_info1.clone()),
+        "database_url": connection_info_to_string(connection_info1.clone()),
         "http_bind_address": format!("127.0.0.1:{}", node1_http),
         "settlement_api_bind_address": format!("127.0.0.1:{}", node1_settlement),
+        "secret_seed": random_secret(),
+        "route_broadcast_interval": 200,
+    }))
+    .unwrap();
+
+    let node2: InterledgerNode = serde_json::from_value(json!({
+        "admin_auth_token": "admin",
+        "database_url": connection_info_to_string(connection_info2.clone()),
+        "http_bind_address": format!("127.0.0.1:{}", node2_http),
+        "settlement_api_bind_address": format!("127.0.0.1:{}", node2_settlement),
         "secret_seed": random_secret(),
         "route_broadcast_interval": 200,
     }))
@@ -131,15 +141,6 @@ fn eth_ledger_settlement() {
         }),
     );
 
-    let node2: InterledgerNode = serde_json::from_value(json!({
-        "admin_auth_token": "admin",
-        "redis_connection": connection_info_to_string(connection_info2.clone()),
-        "http_bind_address": format!("127.0.0.1:{}", node2_http),
-        "settlement_api_bind_address": format!("127.0.0.1:{}", node2_settlement),
-        "secret_seed": random_secret(),
-        "route_broadcast_interval": 200,
-    }))
-    .unwrap();
     runtime.spawn(
         start_eth_engine(
             connection_info2,
@@ -249,22 +250,58 @@ fn eth_ledger_settlement() {
                                 .and_then(move |_| send1)
                                 .and_then(move |_| get_balances())
                                 .and_then(move |ret| {
-                                    assert_eq!(ret[0], 10);
-                                    assert_eq!(ret[1], -10);
+                                    assert_eq!(
+                                        ret[0],
+                                        BalanceData {
+                                            asset_code: "ETH".to_owned(),
+                                            balance: 10e-9
+                                        }
+                                    );
+                                    assert_eq!(
+                                        ret[1],
+                                        BalanceData {
+                                            asset_code: "ETH".to_owned(),
+                                            balance: -10e-9
+                                        }
+                                    );
                                     Ok(())
                                 })
                                 .and_then(move |_| send2)
                                 .and_then(move |_| get_balances())
                                 .and_then(move |ret| {
-                                    assert_eq!(ret[0], 30);
-                                    assert_eq!(ret[1], -30);
+                                    assert_eq!(
+                                        ret[0],
+                                        BalanceData {
+                                            asset_code: "ETH".to_owned(),
+                                            balance: 30e-9
+                                        }
+                                    );
+                                    assert_eq!(
+                                        ret[1],
+                                        BalanceData {
+                                            asset_code: "ETH".to_owned(),
+                                            balance: -30e-9
+                                        }
+                                    );
                                     Ok(())
                                 })
                                 .and_then(move |_| send3)
                                 .and_then(move |_| get_balances())
                                 .and_then(move |ret| {
-                                    assert_eq!(ret[0], 69);
-                                    assert_eq!(ret[1], -69);
+                                    assert_eq!(
+                                        ret[0],
+                                        BalanceData {
+                                            asset_code: "ETH".to_owned(),
+                                            balance: 69e-9
+                                        }
+                                    );
+                                    assert_eq!(
+                                        ret[1],
+                                        BalanceData {
+                                            asset_code: "ETH".to_owned(),
+                                            balance: -69e-9
+                                        }
+                                    );
                                     Ok(())
                                 })
                                 // Up to here, Alice's balance should be -69 and Bob's
@@ -280,8 +317,20 @@ fn eth_ledger_settlement() {
                                             // Since the credit connection reached -70, and the
                                             // settle_to is -10, a 60 Wei transaction is made.
                                             get_balances().and_then(move |ret| {
-                                                assert_eq!(ret[0], 10);
-                                                assert_eq!(ret[1], -10);
+                                                assert_eq!(
+                                                    ret[0],
+                                                    BalanceData {
+                                                        asset_code: "ETH".to_owned(),
+                                                        balance: 10e-9
+                                                    }
+                                                );
+                                                assert_eq!(
+                                                    ret[1],
+                                                    BalanceData {
+                                                        asset_code: "ETH".to_owned(),
+                                                        balance: -10e-9
+                                                    }
+                                                );
                                                 ganache_pid.kill().unwrap();
                                                 Ok(())
                                             })
