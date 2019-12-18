@@ -4,7 +4,7 @@
 use env_logger;
 use futures::future::join_all;
 use futures::Future;
-use ilp_node::{insert_account_with_redis_store, InterledgerNode};
+use ilp_node::InterledgerNode;
 use interledger::{api::AccountDetails, packet::Address, service::Username};
 use secrecy::{ExposeSecret, SecretBytes, SecretString};
 use serde_json::{self, json};
@@ -14,8 +14,8 @@ use tokio::runtime::Builder as RuntimeBuilder;
 
 mod test_helpers;
 use test_helpers::{
-    accounts_to_ids, create_account_on_engine, get_all_accounts, get_balance, random_secret,
-    send_money_to_username, start_ganache, BalanceData,
+    accounts_to_ids, create_account_on_engine, create_account_on_node, get_all_accounts,
+    get_balance, random_secret, send_money_to_username, start_ganache, BalanceData,
 };
 
 #[cfg(feature = "redis")]
@@ -31,7 +31,6 @@ use test_helpers::{redis_helpers::*, start_eth_engine};
 #[cfg(feature = "redis")]
 #[test]
 fn eth_ledger_settlement() {
-    let eth_decimals = 9;
     // Nodes 1 and 2 are peers, Node 2 is the parent of Node 3
     let _ = env_logger::try_init();
     let context = TestContext::new();
@@ -81,136 +80,94 @@ fn eth_ledger_settlement() {
     }))
     .unwrap();
 
-    let node1_clone = node1.clone();
-    runtime.spawn(
-        start_eth_engine(
-            connection_info1,
-            node1_engine_address,
-            alice_key,
-            node1_settlement,
-        )
-        .and_then(move |_| {
-            // TODO insert the accounts via HTTP request
-            insert_account_with_redis_store(
-                &node1,
-                AccountDetails {
-                    ilp_address: Some(Address::from_str("example.alice").unwrap()),
-                    username: Username::from_str("alice").unwrap(),
-                    asset_code: "ETH".to_string(),
-                    asset_scale: eth_decimals,
-                    ilp_over_btp_url: None,
-                    ilp_over_btp_incoming_token: None,
-                    ilp_over_btp_outgoing_token: None,
-                    ilp_over_http_url: None,
-                    ilp_over_http_incoming_token: Some(SecretString::new("in_alice".to_string())),
-                    ilp_over_http_outgoing_token: None,
-                    max_packet_amount: 10,
-                    min_balance: None,
-                    settle_threshold: None,
-                    settle_to: Some(-10),
-                    routing_relation: Some("NonRoutingAccount".to_owned()),
-                    round_trip_time: None,
-                    packets_per_minute_limit: None,
-                    amount_per_minute_limit: None,
-                    settlement_engine_url: None,
-                },
-            )
-            .and_then(move |_| {
-                insert_account_with_redis_store(
-                    &node1_clone,
-                    AccountDetails {
-                        ilp_address: None,
-                        username: Username::from_str("bob").unwrap(),
-                        asset_code: "ETH".to_string(),
-                        asset_scale: eth_decimals,
-                        ilp_over_btp_url: None,
-                        ilp_over_btp_incoming_token: None,
-                        ilp_over_btp_outgoing_token: None,
-                        ilp_over_http_url: Some(format!(
-                            "http://localhost:{}/accounts/alice/ilp",
-                            node2_http
-                        )),
-                        ilp_over_http_incoming_token: Some(SecretString::new("alice".to_string())),
-                        ilp_over_http_outgoing_token: Some(SecretString::new("bob".to_string())),
-                        max_packet_amount: 10,
-                        min_balance: Some(-100),
-                        settle_threshold: Some(70),
-                        settle_to: Some(10),
-                        routing_relation: Some("Child".to_owned()),
-                        round_trip_time: None,
-                        packets_per_minute_limit: None,
-                        amount_per_minute_limit: None,
-                        settlement_engine_url: Some(format!("http://localhost:{}", node1_engine)),
-                    },
-                )
-            })
-            .and_then(move |_| node1.serve())
-        }),
+    let alice_on_alice = json!({
+        "ilp_address": "example.alice",
+        "username": "alice",
+        "asset_code": "ETH",
+        "asset_scale": 9,
+        "ilp_over_http_incoming_token" : "in_alice",
+        "settle_to": -10,
+        "routing_relation": "NonRoutingAccount",
+    });
+
+    let bob_on_alice = json!({
+        "username": "bob",
+        "asset_code": "ETH",
+        "asset_scale": 9,
+        "ilp_over_http_incoming_token" : "bob_password",
+        "ilp_over_http_url": format!("http://localhost:{}/accounts/alice/ilp", node2_http),
+        "ilp_over_http_outgoing_token" : "alice_password",
+        "min_balance": -100,
+        "settle_threshold": 70,
+        "settle_to": 10,
+        "settlement_engine_url": format!("http://localhost:{}", node1_engine),
+        "routing_relation": "Child",
+    });
+
+    let alice_fut = create_account_on_node(node1_http, alice_on_alice, "admin")
+        .and_then(move |resp| {
+            println!("inserted {:?}", resp);
+            Ok(())
+        })
+        .and_then(move |_| create_account_on_node(node1_http, bob_on_alice, "admin"))
+        .and_then(move |resp| {
+            println!("inserted {:?}", resp);
+            Ok(())
+        });
+
+    let node1_eth_engine_fut = start_eth_engine(
+        connection_info1,
+        node1_engine_address,
+        alice_key,
+        node1_settlement,
     );
 
     runtime.spawn(
-        start_eth_engine(
-            connection_info2,
-            node2_engine_address,
-            bob_key,
-            node2_settlement,
-        )
-        .and_then(move |_| {
-            insert_account_with_redis_store(
-                &node2,
-                AccountDetails {
-                    ilp_address: None,
-                    username: Username::from_str("bob").unwrap(),
-                    asset_code: "ETH".to_string(),
-                    asset_scale: eth_decimals,
-                    ilp_over_btp_url: None,
-                    ilp_over_btp_incoming_token: None,
-                    ilp_over_btp_outgoing_token: None,
-                    ilp_over_http_url: None,
-                    ilp_over_http_incoming_token: Some(SecretString::new("in_bob".to_string())),
-                    ilp_over_http_outgoing_token: None,
-                    max_packet_amount: 10,
-                    min_balance: None,
-                    settle_threshold: None,
-                    settle_to: None,
-                    routing_relation: Some("NonRoutingAccount".to_owned()),
-                    round_trip_time: None,
-                    packets_per_minute_limit: None,
-                    amount_per_minute_limit: None,
-                    settlement_engine_url: None,
-                },
-            )
-            .and_then(move |_| {
-                insert_account_with_redis_store(
-                    &node2,
-                    AccountDetails {
-                        ilp_address: Some(Address::from_str("example.alice").unwrap()),
-                        username: Username::from_str("alice").unwrap(),
-                        asset_code: "ETH".to_string(),
-                        asset_scale: eth_decimals,
-                        ilp_over_btp_url: None,
-                        ilp_over_btp_incoming_token: None,
-                        ilp_over_btp_outgoing_token: None,
-                        ilp_over_http_url: Some(format!(
-                            "http://localhost:{}/accounts/bob/ilp",
-                            node1_http
-                        )),
-                        ilp_over_http_incoming_token: Some(SecretString::new("bob".to_string())),
-                        ilp_over_http_outgoing_token: Some(SecretString::new("alice".to_string())),
-                        max_packet_amount: 10,
-                        min_balance: Some(-100),
-                        settle_threshold: Some(70),
-                        settle_to: Some(-10),
-                        routing_relation: Some("Parent".to_owned()),
-                        round_trip_time: None,
-                        packets_per_minute_limit: None,
-                        amount_per_minute_limit: None,
-                        settlement_engine_url: Some(format!("http://localhost:{}", node2_engine)),
-                    },
-                )
-                .and_then(move |_| node2.serve())
-            })
-        }),
+        node1_eth_engine_fut
+            .and_then(move |_| node1.serve())
+            .and_then(move |_| alice_fut)
+            .and_then(move |_| Ok(())),
+    );
+
+    let bob_on_bob = json!({
+        "username": "bob",
+        "asset_code": "ETH",
+        "asset_scale": 9,
+        "ilp_over_http_incoming_token" : "in_bob",
+        "settle_to": -10,
+        "routing_relation": "NonRoutingAccount",
+    });
+
+    let alice_on_bob = json!({
+        "ilp_address": "example.alice",
+        "username": "alice",
+        "asset_code": "ETH",
+        "asset_scale": 9,
+        "ilp_over_http_incoming_token" : "alice_password",
+        "ilp_over_http_url": format!("http://localhost:{}/accounts/bob/ilp", node1_http),
+        "ilp_over_http_outgoing_token" : "bob_password",
+        "min_balance": -100,
+        "settle_threshold": 70,
+        "settle_to": -10,
+        "settlement_engine_url": format!("http://localhost:{}", node2_engine),
+        "routing_relation": "Parent",
+    });
+
+    let bob_fut = create_account_on_node(node2_http, bob_on_bob, "admin")
+        .and_then(move |_| create_account_on_node(node2_http, alice_on_bob, "admin"));
+
+    let node2_eth_engine_fut = start_eth_engine(
+        connection_info2,
+        node2_engine_address,
+        bob_key,
+        node2_settlement,
+    );
+
+    runtime.spawn(
+        node2_eth_engine_fut
+            .and_then(move |_| node2.serve())
+            .and_then(move |_| bob_fut)
+            .and_then(move |_| Ok(())),
     );
 
     runtime
@@ -219,131 +176,115 @@ fn eth_ledger_settlement() {
             delay(1000)
                 .map_err(|_| panic!("Something strange happened"))
                 .and_then(move |_| {
-                    // The 2 nodes are peered, we make a POST to the engine's
-                    // create account endpoint so that they trade addresses.
-                    // This would happen automatically if we inserted the
-                    // accounts via the Accounts API.
-                    let alice_addr = Address::from_str("example.alice").unwrap();
-                    get_all_accounts(node2_http, "admin")
-                        .map(accounts_to_ids)
-                        .and_then(move |node2_ids| {
-                            let alice = node2_ids.get(&alice_addr).unwrap().to_owned();
-                            // We can skip the creation of the account on the first
-                            // engine since the second call will create it on both
-                            // (and it happens via the RPC when peering is completed)
-                            let create2 = create_account_on_engine(node2_engine, alice);
+                    // Make 4 subsequent payments (we could also do a 71 payment
+                    // directly)
+                    let send1 = send_money_to_username(
+                        node1_http, node2_http, 10, "bob", "alice", "in_alice",
+                    );
+                    let send2 = send_money_to_username(
+                        node1_http, node2_http, 20, "bob", "alice", "in_alice",
+                    );
+                    let send3 = send_money_to_username(
+                        node1_http, node2_http, 39, "bob", "alice", "in_alice",
+                    );
+                    let send4 = send_money_to_username(
+                        node1_http, node2_http, 1, "bob", "alice", "in_alice",
+                    );
 
-                            // Make 4 subsequent payments (we could also do a 71 payment
-                            // directly)
-                            let send1 = send_money_to_username(
-                                node1_http, node2_http, 10, "bob", "alice", "in_alice",
-                            );
-                            let send2 = send_money_to_username(
-                                node1_http, node2_http, 20, "bob", "alice", "in_alice",
-                            );
-                            let send3 = send_money_to_username(
-                                node1_http, node2_http, 39, "bob", "alice", "in_alice",
-                            );
-                            let send4 = send_money_to_username(
-                                node1_http, node2_http, 1, "bob", "alice", "in_alice",
-                            );
+                    let get_balances = move || {
+                        join_all(vec![
+                            get_balance("bob", node1_http, "bob_password"),
+                            get_balance("alice", node2_http, "alice_password"),
+                        ])
+                    };
 
-                            let get_balances = move || {
-                                join_all(vec![
-                                    get_balance("bob", node1_http, "alice"),
-                                    get_balance("alice", node2_http, "bob"),
-                                ])
-                            };
-
-                            create2
-                                .and_then(move |_| send1)
-                                .and_then(move |_| get_balances())
-                                .and_then(move |ret| {
-                                    assert_eq!(
-                                        ret[0],
-                                        BalanceData {
-                                            asset_code: "ETH".to_owned(),
-                                            balance: 10e-9
-                                        }
-                                    );
-                                    assert_eq!(
-                                        ret[1],
-                                        BalanceData {
-                                            asset_code: "ETH".to_owned(),
-                                            balance: -10e-9
-                                        }
-                                    );
-                                    Ok(())
-                                })
-                                .and_then(move |_| send2)
-                                .and_then(move |_| get_balances())
-                                .and_then(move |ret| {
-                                    assert_eq!(
-                                        ret[0],
-                                        BalanceData {
-                                            asset_code: "ETH".to_owned(),
-                                            balance: 30e-9
-                                        }
-                                    );
-                                    assert_eq!(
-                                        ret[1],
-                                        BalanceData {
-                                            asset_code: "ETH".to_owned(),
-                                            balance: -30e-9
-                                        }
-                                    );
-                                    Ok(())
-                                })
-                                .and_then(move |_| send3)
-                                .and_then(move |_| get_balances())
-                                .and_then(move |ret| {
-                                    assert_eq!(
-                                        ret[0],
-                                        BalanceData {
-                                            asset_code: "ETH".to_owned(),
-                                            balance: 69e-9
-                                        }
-                                    );
-                                    assert_eq!(
-                                        ret[1],
-                                        BalanceData {
-                                            asset_code: "ETH".to_owned(),
-                                            balance: -69e-9
-                                        }
-                                    );
-                                    Ok(())
-                                })
-                                // Up to here, Alice's balance should be -69 and Bob's
-                                // balance should be 69. Once we make 1 more payment, we
-                                // exceed the settle_threshold and thus a settlement is made
-                                .and_then(move |_| send4)
+                    send1
+                        .and_then(move |_| get_balances())
+                        .and_then(move |ret| {
+                            assert_eq!(
+                                ret[0],
+                                BalanceData {
+                                    asset_code: "ETH".to_owned(),
+                                    balance: 10e-9
+                                }
+                            );
+                            assert_eq!(
+                                ret[1],
+                                BalanceData {
+                                    asset_code: "ETH".to_owned(),
+                                    balance: -10e-9
+                                }
+                            );
+                            Ok(())
+                        })
+                        .and_then(move |_| send2)
+                        .and_then(move |_| get_balances())
+                        .and_then(move |ret| {
+                            assert_eq!(
+                                ret[0],
+                                BalanceData {
+                                    asset_code: "ETH".to_owned(),
+                                    balance: 30e-9
+                                }
+                            );
+                            assert_eq!(
+                                ret[1],
+                                BalanceData {
+                                    asset_code: "ETH".to_owned(),
+                                    balance: -30e-9
+                                }
+                            );
+                            Ok(())
+                        })
+                        .and_then(move |_| send3)
+                        .and_then(move |_| get_balances())
+                        .and_then(move |ret| {
+                            assert_eq!(
+                                ret[0],
+                                BalanceData {
+                                    asset_code: "ETH".to_owned(),
+                                    balance: 69e-9
+                                }
+                            );
+                            assert_eq!(
+                                ret[1],
+                                BalanceData {
+                                    asset_code: "ETH".to_owned(),
+                                    balance: -69e-9
+                                }
+                            );
+                            Ok(())
+                        })
+                        // Up to here, Alice's balance should be -69 and Bob's
+                        // balance should be 69. Once we make 1 more payment, we
+                        // exceed the settle_threshold and thus a settlement is made
+                        .and_then(move |_| send4)
+                        .and_then(move |_| {
+                            // Wait a few seconds so that the receiver's engine
+                            // gets the data
+                            delay(5000)
+                                .map_err(move |_| panic!("Weird error."))
                                 .and_then(move |_| {
-                                    // Wait a few seconds so that the receiver's engine
-                                    // gets the data
-                                    delay(5000)
-                                        .map_err(move |_| panic!("Weird error."))
-                                        .and_then(move |_| {
-                                            // Since the credit connection reached -70, and the
-                                            // settle_to is -10, a 60 Wei transaction is made.
-                                            get_balances().and_then(move |ret| {
-                                                assert_eq!(
-                                                    ret[0],
-                                                    BalanceData {
-                                                        asset_code: "ETH".to_owned(),
-                                                        balance: 10e-9
-                                                    }
-                                                );
-                                                assert_eq!(
-                                                    ret[1],
-                                                    BalanceData {
-                                                        asset_code: "ETH".to_owned(),
-                                                        balance: -10e-9
-                                                    }
-                                                );
-                                                ganache_pid.kill().unwrap();
-                                                Ok(())
-                                            })
-                                        })
+                                    // Since the credit connection reached -70, and the
+                                    // settle_to is -10, a 60 Wei transaction is made.
+                                    get_balances().and_then(move |ret| {
+                                        assert_eq!(
+                                            ret[0],
+                                            BalanceData {
+                                                asset_code: "ETH".to_owned(),
+                                                balance: 10e-9
+                                            }
+                                        );
+                                        assert_eq!(
+                                            ret[1],
+                                            BalanceData {
+                                                asset_code: "ETH".to_owned(),
+                                                balance: -10e-9
+                                            }
+                                        );
+                                        ganache_pid.kill().unwrap();
+                                        Ok(())
+                                    })
                                 })
                         })
                 }),
