@@ -4,7 +4,7 @@
 use env_logger;
 use futures::future::join_all;
 use futures::Future;
-use ilp_node::{InterledgerNode, insert_account_with_redis_store};
+use ilp_node::{insert_account_with_redis_store, InterledgerNode};
 use interledger::{api::AccountDetails, packet::Address, service::Username};
 use secrecy::{ExposeSecret, SecretBytes, SecretString};
 use serde_json::{self, json};
@@ -91,7 +91,9 @@ fn eth_ledger_settlement() {
         )
         .and_then(move |_| {
             // TODO insert the accounts via HTTP request
-            insert_account_with_redis_store(&node1, AccountDetails {
+            insert_account_with_redis_store(
+                &node1,
+                AccountDetails {
                     ilp_address: Some(Address::from_str("example.alice").unwrap()),
                     username: Username::from_str("alice").unwrap(),
                     asset_code: "ETH".to_string(),
@@ -111,9 +113,12 @@ fn eth_ledger_settlement() {
                     packets_per_minute_limit: None,
                     amount_per_minute_limit: None,
                     settlement_engine_url: None,
-                })
-                .and_then(move |_| {
-                    insert_account_with_redis_store(&node1_clone, AccountDetails {
+                },
+            )
+            .and_then(move |_| {
+                insert_account_with_redis_store(
+                    &node1_clone,
+                    AccountDetails {
                         ilp_address: None,
                         username: Username::from_str("bob").unwrap(),
                         asset_code: "ETH".to_string(),
@@ -121,11 +126,12 @@ fn eth_ledger_settlement() {
                         ilp_over_btp_url: None,
                         ilp_over_btp_incoming_token: None,
                         ilp_over_btp_outgoing_token: None,
-                        ilp_over_http_url: Some(format!("http://localhost:{}/accounts/alice/ilp", node2_http)),
-                        ilp_over_http_incoming_token: Some(SecretString::new("alice".to_string())),
-                        ilp_over_http_outgoing_token: Some(SecretString::new(
-                            "bob".to_string(),
+                        ilp_over_http_url: Some(format!(
+                            "http://localhost:{}/accounts/alice/ilp",
+                            node2_http
                         )),
+                        ilp_over_http_incoming_token: Some(SecretString::new("alice".to_string())),
+                        ilp_over_http_outgoing_token: Some(SecretString::new("bob".to_string())),
                         max_packet_amount: 10,
                         min_balance: Some(-100),
                         settle_threshold: Some(70),
@@ -135,9 +141,10 @@ fn eth_ledger_settlement() {
                         packets_per_minute_limit: None,
                         amount_per_minute_limit: None,
                         settlement_engine_url: Some(format!("http://localhost:{}", node1_engine)),
-                    })
-                })
-                .and_then(move |_| node1.serve())
+                    },
+                )
+            })
+            .and_then(move |_| node1.serve())
         }),
     );
 
@@ -149,7 +156,9 @@ fn eth_ledger_settlement() {
             node2_settlement,
         )
         .and_then(move |_| {
-            insert_account_with_redis_store(&node2, AccountDetails {
+            insert_account_with_redis_store(
+                &node2,
+                AccountDetails {
                     ilp_address: None,
                     username: Username::from_str("bob").unwrap(),
                     asset_code: "ETH".to_string(),
@@ -169,38 +178,38 @@ fn eth_ledger_settlement() {
                     packets_per_minute_limit: None,
                     amount_per_minute_limit: None,
                     settlement_engine_url: None,
-                })
-                .and_then(move |_| {
-                    insert_account_with_redis_store(&node2, AccountDetails {
-                            ilp_address: Some(Address::from_str("example.alice").unwrap()),
-                            username: Username::from_str("alice").unwrap(),
-                            asset_code: "ETH".to_string(),
-                            asset_scale: eth_decimals,
-                            ilp_over_btp_url: None,
-                            ilp_over_btp_incoming_token: None,
-                            ilp_over_btp_outgoing_token: None,
-                            ilp_over_http_url: Some(format!("http://localhost:{}/accounts/bob/ilp", node1_http)),
-                            ilp_over_http_incoming_token: Some(SecretString::new(
-                                "bob".to_string(),
-                            )),
-                            ilp_over_http_outgoing_token: Some(SecretString::new(
-                                "alice".to_string(),
-                            )),
-                            max_packet_amount: 10,
-                            min_balance: Some(-100),
-                            settle_threshold: Some(70),
-                            settle_to: Some(-10),
-                            routing_relation: Some("Parent".to_owned()),
-                            round_trip_time: None,
-                            packets_per_minute_limit: None,
-                            amount_per_minute_limit: None,
-                            settlement_engine_url: Some(format!(
-                                "http://localhost:{}",
-                                node2_engine
-                            )),
-                        })
-                        .and_then(move |_| node2.serve())
-                })
+                },
+            )
+            .and_then(move |_| {
+                insert_account_with_redis_store(
+                    &node2,
+                    AccountDetails {
+                        ilp_address: Some(Address::from_str("example.alice").unwrap()),
+                        username: Username::from_str("alice").unwrap(),
+                        asset_code: "ETH".to_string(),
+                        asset_scale: eth_decimals,
+                        ilp_over_btp_url: None,
+                        ilp_over_btp_incoming_token: None,
+                        ilp_over_btp_outgoing_token: None,
+                        ilp_over_http_url: Some(format!(
+                            "http://localhost:{}/accounts/bob/ilp",
+                            node1_http
+                        )),
+                        ilp_over_http_incoming_token: Some(SecretString::new("bob".to_string())),
+                        ilp_over_http_outgoing_token: Some(SecretString::new("alice".to_string())),
+                        max_packet_amount: 10,
+                        min_balance: Some(-100),
+                        settle_threshold: Some(70),
+                        settle_to: Some(-10),
+                        routing_relation: Some("Parent".to_owned()),
+                        round_trip_time: None,
+                        packets_per_minute_limit: None,
+                        amount_per_minute_limit: None,
+                        settlement_engine_url: Some(format!("http://localhost:{}", node2_engine)),
+                    },
+                )
+                .and_then(move |_| node2.serve())
+            })
         }),
     );
 
