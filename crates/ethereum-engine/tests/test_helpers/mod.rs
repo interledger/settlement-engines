@@ -41,9 +41,10 @@ pub struct DeliveryData {
     pub delivered_amount: u64,
 }
 
-#[derive(Deserialize)]
+#[derive(serde::Deserialize, Debug, PartialEq)]
 pub struct BalanceData {
-    pub balance: i64,
+    pub balance: f64,
+    pub asset_code: String,
 }
 
 #[allow(unused)]
@@ -174,13 +175,12 @@ pub fn send_money_to_username<T: Display + Debug>(
     from_auth: &str,
 ) -> impl Future<Item = u64, Error = ()> {
     let client = reqwest::r#async::Client::new();
-    let auth = format!("{}:{}", from_username, from_auth);
     client
         .post(&format!(
             "http://localhost:{}/accounts/{}/payments",
             from_port, from_username
         ))
-        .header("Authorization", format!("Bearer {}", auth))
+        .header("Authorization", format!("Bearer {}", from_auth))
         .json(&json!({
             "receiver": format!("http://localhost:{}/accounts/{}/spsp", to_port, to_username),
             "source_amount": amount,
@@ -232,14 +232,14 @@ pub fn get_balance<T: Display>(
     username: T,
     node_port: u16,
     auth: &str,
-) -> impl Future<Item = i64, Error = ()> {
+) -> impl Future<Item = BalanceData, Error = ()> {
     let client = reqwest::r#async::Client::new();
     client
         .get(&format!(
             "http://localhost:{}/accounts/{}/balance",
             node_port, username
         ))
-        .header("Authorization", format!("Bearer {}:{}", username, auth))
+        .header("Authorization", format!("Bearer {}", auth))
         .send()
         .and_then(|res| res.error_for_status())
         .and_then(|res| res.into_body().concat2())
@@ -248,7 +248,7 @@ pub fn get_balance<T: Display>(
         })
         .and_then(|body| {
             let ret: BalanceData = serde_json::from_slice(&body).unwrap();
-            Ok(ret.balance)
+            Ok(ret)
         })
 }
 
