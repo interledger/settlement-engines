@@ -2,7 +2,9 @@ use super::utils::{
     types::{Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore},
     web3::{filter_transfer_logs, make_tx, sent_to_us, ERC20Transfer, EthAddress},
 };
+use futures::{compat::Future01CompatExt, TryFutureExt};
 
+use async_trait::async_trait;
 use clarity::Signature;
 use log::{debug, error, trace};
 use parking_lot::RwLock;
@@ -14,26 +16,21 @@ use std::sync::Arc;
 use hyper::StatusCode;
 use log::info;
 use num_bigint::BigUint;
-use reqwest::r#async::{Client, Response as HttpResponse};
+use reqwest::{Client, Response as HttpResponse};
 use serde::{de::Error as DeserializeError, Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use std::net::SocketAddr;
-use std::{
-    marker::PhantomData,
-    str::FromStr,
-    time::{Duration, Instant},
-};
+use std::{marker::PhantomData, str::FromStr, time::Duration};
 use std::{str, u64};
-use tokio::timer::Interval;
 use tokio_retry::{strategy::ExponentialBackoff, Retry};
 use url::Url;
 use uuid::Uuid;
 use web3::{
     api::Web3,
-    futures::future::{err, join_all, ok, Either, Future},
-    futures::stream::Stream,
+    futures::Future as Future01,
     transports::Http,
-    types::{Address, BlockNumber, CallRequest, TransactionId, H256, U256},
+    types::Transaction,
+    types::{Address, BlockNumber, CallRequest, H256, U256},
 };
 
 use interledger_http::error::*;
@@ -177,9 +174,7 @@ where
         self
     }
 
-    pub fn connect(
-        &self,
-    ) -> impl Future<Item = EthereumLedgerSettlementEngine<S, Si, A>, Error = ()> {
+    pub async fn connect(&self) -> EthereumLedgerSettlementEngine<S, Si, A> {
         let ethereum_endpoint = if let Some(ref ethereum_endpoint) = self.ethereum_endpoint {
             &ethereum_endpoint
         } else {
@@ -222,28 +217,30 @@ where
         let store = self.store.clone();
         let signer = self.signer.clone();
         let watch_incoming = self.watch_incoming;
-        web3.net().version().then(move |result| {
-            let net_version = result.unwrap_or_else(|_| chain_id.to_string());
-            let engine = EthereumLedgerSettlementEngine {
-                web3,
-                store,
-                signer,
-                address,
-                chain_id,
-                confirmations,
-                poll_frequency,
-                connector_url,
-                asset_scale,
-                net_version,
-                account_type: PhantomData,
-                challenges: Arc::new(RwLock::new(HashMap::new())),
-            };
-            if watch_incoming {
-                engine.notify_connector_on_incoming_settlement();
-            }
-
-            Ok(engine)
-        })
+        let net_version = web3
+            .net()
+            .version()
+            .compat()
+            .await
+            .unwrap_or_else(|_| chain_id.to_string());
+        let engine = EthereumLedgerSettlementEngine {
+            web3,
+            store,
+            signer,
+            address,
+            chain_id,
+            confirmations,
+            poll_frequency,
+            connector_url,
+            asset_scale,
+            net_version,
+            account_type: PhantomData,
+            challenges: Arc::new(RwLock::new(HashMap::new())),
+        };
+        if watch_incoming {
+            engine.notify_connector_on_incoming_settlement();
+        }
+        engine
     }
 }
 
@@ -262,23 +259,13 @@ where
     /// Settlement Engine's connectors about transactions which are sent to the
     /// engine's address.
     pub fn notify_connector_on_incoming_settlement(&self) {
-        let _self = self.clone();
-        let interval = self.poll_frequency;
-        let address = self.address;
-        debug!(
-            "[{:?}] settlement engine service for listening to incoming settlements. Interval: {:?}",
-            address, interval,
-        );
-        std::thread::spawn(move || {
-            tokio::run(
-                Interval::new(Instant::now(), interval)
-                    .map_err(|e| panic!("interval errored; err={:?}", e))
-                    .for_each(move |_| _self.handle_received_transactions())
-                    .then(|_| {
-                        // Don't stop loop even if there was an error
-                        Ok(())
-                    }),
-            );
+        let this = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(this.poll_frequency);
+            loop {
+                interval.tick().await;
+                let _ = this.handle_received_transactions().await;
+            }
         });
     }
 
@@ -305,219 +292,162 @@ where
     // (accountId=>amount) across all transactions and blocks, and
     // only makes 1 transaction per accountId with the
     // appropriate amount.
-    pub fn handle_received_transactions(&self) -> impl Future<Item = (), Error = ()> + Send {
+    pub async fn handle_received_transactions(&self) -> Result<(), ()> {
         let confirmations = self.confirmations;
         let web3 = self.web3.clone();
-        let store = self.store.clone();
-        let store_clone = self.store.clone();
-        let self_clone = self.clone();
-        let self_clone2 = self.clone();
         let our_address = self.address.own_address;
         let token_address = self.address.token_address;
         let net_version = self.net_version.clone();
-        let net_version_clone = net_version.clone();
 
-        // We `Box` futures in these functions due to
-        // https://github.com/rust-lang/rust/issues/54540#issuecomment-494749912.
-        // Otherwise, we get `type_length_limit` errors.
         // get the current block number
-        web3.eth()
+        let current_block = web3
+            .eth()
             .block_number()
+            .compat()
             .map_err(move |err| error!("Could not fetch current block number {:?}", err))
-            .and_then(move |current_block| {
-                // get the safe number of blocks to avoid reorgs
-                let fetch_until = current_block - confirmations;
-                // U256 does not implement IntoFuture so we must wrap it
-                Ok((
-                    Ok(fetch_until),
-                    store.load_recently_observed_block(net_version),
-                ))
-            })
-            .flatten()
-            .and_then(move |(to_block, last_observed_block)| {
-                // If we are just starting up, fetch only the most recent block
-                // Note this means we will ignore transactions that were received before
-                // the first time the settlement engine was started.
-                let from_block = if let Some(last_observed_block) = last_observed_block {
-                    if to_block == last_observed_block {
-                        // We already processed the latest block
-                        return Either::A(ok(()));
-                    } else {
-                        last_observed_block + 1
+            .await?;
+
+        // get the safe number of blocks to avoid reorgs
+        let to_block = current_block - confirmations;
+
+        // If we are just starting up, fetch only the most recent block
+        // Note this means we will ignore transactions that were received before
+        // the first time the settlement engine was started.
+        let last_observed_block = self
+            .store
+            .load_recently_observed_block(net_version.clone())
+            .await?;
+        let from_block = if let Some(last_observed_block) = last_observed_block {
+            if to_block == last_observed_block {
+                // We already processed the latest block
+                return Ok(());
+            } else {
+                last_observed_block + 1
+            }
+        } else {
+            // Check only the latest block
+            to_block
+        };
+
+        trace!("Fetching txs from block {} until {}", from_block, to_block);
+
+        // TODO: Make this work with join_all!
+        if let Some(token_address) = token_address {
+            // get all erc20 transactions
+            let transfers: Vec<ERC20Transfer> = filter_transfer_logs(
+                web3.clone(),
+                token_address,
+                None,
+                Some(our_address),
+                BlockNumber::Number(from_block.low_u64()),
+                BlockNumber::Number(to_block.low_u64()),
+            )
+            .await?;
+
+            for transfer in transfers {
+                self.notify_erc20_transfer(transfer, token_address).await?;
+            }
+        } else {
+            let checked_blocks = from_block.low_u64()..=to_block.low_u64();
+            for block_num in checked_blocks {
+                let maybe_block = self
+                    .web3
+                    .eth()
+                    .block_with_txs(BlockNumber::Number(block_num).into())
+                    .map_err(move |err| {
+                        error!("Got error while getting block {}: {:?}", block_num, err)
+                    })
+                    .compat()
+                    .await?;
+                if let Some(block) = maybe_block {
+                    for tx in block.transactions {
+                        self.notify_eth_transfer(tx).await?;
                     }
-                } else {
-                    // Check only the latest block
-                    to_block
-                };
+                }
+            }
+        }
 
-                trace!("Fetching txs from block {} until {}", from_block, to_block);
-
-                let notify_all_txs_fut = if let Some(token_address) = token_address {
-                    // get all erc20 transactions
-                    let notify_all_erc20_txs_fut = filter_transfer_logs(
-                        web3.clone(),
-                        token_address,
-                        None,
-                        Some(our_address),
-                        BlockNumber::Number(from_block.low_u64()),
-                        BlockNumber::Number(to_block.low_u64()),
-                    )
-                    .and_then(move |transfers: Vec<ERC20Transfer>| {
-                        // map each incoming erc20 transactions to an outgoing
-                        // notification to the connector
-                        join_all(transfers.into_iter().map(move |transfer| {
-                            self_clone2.notify_erc20_transfer(transfer, token_address)
-                        }))
-                    });
-
-                    // combine all erc20 futures for that range of blocks
-                    Either::A(notify_all_erc20_txs_fut)
-                } else {
-                    let checked_blocks = from_block.low_u64()..=to_block.low_u64();
-                    // for each block create a future which will notify the
-                    // connector about all the transactions in that block that are sent to our account
-                    let notify_eth_txs_fut = checked_blocks
-                        .map(move |block_num| self_clone.notify_eth_txs_in_block(block_num));
-
-                    // combine all the futures for that range of blocks
-                    Either::B(join_all(notify_eth_txs_fut))
-                };
-
-                Either::B(notify_all_txs_fut.and_then(move |_| {
-                    trace!("Processed all transctions up to block {}", to_block);
-                    // now that all transactions have been processed successfully, we
-                    // can save `to_block` as the latest observed block
-                    store_clone.save_recently_observed_block(net_version_clone, to_block)
-                }))
-            })
+        trace!("Processed all transactions up to block {}", to_block);
+        // now that all transactions have been processed successfully, we
+        // can save `to_block` as the latest observed block
+        self.store
+            .save_recently_observed_block(net_version, to_block)
+            .await
     }
 
     /// Submits an ERC20 transfer object's data to the connector
     // todo: Try combining the body of this function with `notify_eth_transfer`
-    fn notify_erc20_transfer(
+    async fn notify_erc20_transfer(
         &self,
         transfer: ERC20Transfer,
         token_address: Address,
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
-        let store = self.store.clone();
+    ) -> Result<(), ()> {
         let tx_hash = transfer.tx_hash;
-        let self_clone = self.clone();
         let addr = Addresses {
             own_address: transfer.from,
             token_address: Some(token_address),
         };
         let amount = transfer.amount;
-        Box::new(store
+        let is_tx_processed = self
+            .store
             .check_if_tx_processed(tx_hash)
             .map_err(move |_| error!("Error when querying store about transaction: {:?}", tx_hash))
-            .and_then(move |processed| {
-                if !processed {
-                    Either::A(
-                        store
-                            .load_account_id_from_address(addr)
-                            .and_then(move |id| {
-                                debug!("Notifying connector about incoming ERC20 transaction for account {} for amount: {} (tx hash: {})", id, amount, tx_hash);
-                                self_clone.notify_connector(id.to_string(), amount.to_string(), tx_hash)
-                            })
-                            .and_then(move |_| {
-                                // only save the transaction hash if the connector
-                                // was successfully notified
-                                store.mark_tx_processed(tx_hash)
-                            }),
-                    )
-                } else {
-                    Either::B(ok(())) // return an empty future otherwise since we want to skip this transaction
-                }
-            }))
+            .await?;
+
+        if !is_tx_processed {
+            let account_id = self.store.load_account_id_from_address(addr).await?;
+
+            debug!("Notifying connector about incoming ERC20 transaction for account {} for amount: {} (tx hash: {})", account_id, amount, tx_hash);
+            self.notify_connector(account_id.to_string(), amount.to_string(), tx_hash)
+                .await?;
+            self.store.mark_tx_processed(tx_hash).await?;
+        }
+
+        Ok(())
     }
 
-    fn notify_eth_txs_in_block(&self, block_number: u64) -> impl Future<Item = (), Error = ()> {
-        trace!("Getting txs for block {}", block_number);
-        let self_clone = self.clone();
-        // Get the block at `block_number`
-        self.web3
-            .eth()
-            .block(BlockNumber::Number(block_number).into())
-            .map_err(move |err| error!("Got error while getting block {}: {:?}", block_number, err))
-            .and_then(move |maybe_block| {
-                // Error out if the block was not found (unlikely to occur since we're only
-                // calling this for past blocks)
-                if let Some(block) = maybe_block {
-                    ok(block)
-                } else {
-                    err(())
-                }
-            })
-            .and_then(move |block| {
-                // for each transaction inside the block, submit it to the
-                // connector if it was sent to us
-                let submit_txs_to_connector_future = block
-                    .transactions
-                    .into_iter()
-                    .map(move |tx_hash| self_clone.notify_eth_transfer(tx_hash));
-
-                // combine all the futures for that block's transactions
-                join_all(submit_txs_to_connector_future)
-            })
-            .and_then(|_| Ok(()))
-    }
-
-    fn notify_eth_transfer(&self, tx_hash: H256) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+    /// Notifies the connector about an Ethereum transaction. Requires parsing the transaction directly
+    async fn notify_eth_transfer(&self, tx: Transaction) -> Result<(), ()> {
         let our_address = self.address.own_address;
-        let web3 = self.web3.clone();
-        let store = self.store.clone();
-        let self_clone = self.clone();
-        // Skip transactions which have already been processed by the connector
-        Box::new(store.check_if_tx_processed(tx_hash)
-        .map_err(move |_| error!("Error when querying store about transaction: {:?}", tx_hash))
-        .and_then(move |processed| {
-            if !processed {
-                Either::A(web3.eth().transaction(TransactionId::Hash(tx_hash))
-                .map_err(move |err| error!("Could not fetch transaction data from transaction hash: {:?}. Got error: {:?}", tx_hash, err))
-                .and_then(move |maybe_tx| {
-                    // Unlikely to error out since we only call this on
-                    // transaction hashes which were inside a mined block that
-                    // had many confirmations
-                    if let Some(tx) = maybe_tx { ok(tx) } else { err(())}
-                })
-                .and_then(move |tx| {
-                    if let Some((from, amount)) = sent_to_us(tx, our_address) {
-                        trace!("Got transaction for our account from {} for amount {}", from, amount);
-                    if amount > U256::from(0) {
-                        // if the tx was for us and had some non-0 amount, then let
-                        // the connector know
-                        let addr = Addresses {
-                            own_address: from,
-                            token_address: None,
-                        };
+        let tx_hash = tx.hash;
+        let is_tx_processed = self
+            .store
+            .check_if_tx_processed(tx_hash)
+            .map_err(move |_| error!("Error when querying store about transaction: {:?}", tx_hash))
+            .await?;
 
-                        return Either::A(store.load_account_id_from_address(addr)
-                        .and_then(move |id| {
-                            self_clone.notify_connector(id.to_string(), amount.to_string(), tx_hash)
-                        })
-                        .and_then(move |_| {
-                            // only save the transaction hash if the connector
-                            // was successfully notified
-                            store.mark_tx_processed(tx_hash)
-                                }));
+        // This is a no-op if the operation was already processed
+        if !is_tx_processed {
+            if let Some((from, amount)) = sent_to_us(tx, our_address) {
+                trace!(
+                    "Got transaction for our account from {} for amount {}",
+                    from,
+                    amount
+                );
+                if amount > U256::from(0) {
+                    // if the tx was for us and had some non-0 amount, then let
+                    // the connector know
+                    let addr = Addresses {
+                        own_address: from,
+                        token_address: None,
+                    };
 
-                            }
-                        }
-                        // Ignore this transaction if it wasn't for us or was for a zero amount
-                        Either::B(ok(()))
-                }))
-            } else {
-                Either::B(ok(())) // return an empty future otherwise since we want to skip this transaction
+                    let account_id = self.store.load_account_id_from_address(addr).await?;
+                    self.notify_connector(account_id.to_string(), amount.to_string(), tx_hash)
+                        .await?;
+                    self.store.mark_tx_processed(tx_hash).await?;
+                }
             }
-        }))
+        }
+        Ok(())
     }
 
-    fn notify_connector(
+    async fn notify_connector(
         &self,
         account_id: String,
         amount: String,
         tx_hash: H256,
-    ) -> impl Future<Item = (), Error = ()> {
+    ) -> Result<(), ()> {
         let engine_scale = self.asset_scale;
         let mut url = self.connector_url.clone();
         url.path_segments_mut()
@@ -549,18 +479,19 @@ where
                         account_id, amount, err
                     );
                 })
+                .compat()
         };
-        Retry::spawn(
-            ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
-            action,
-        )
-        .map_err(move |_| {
-            error!("Exceeded max retries when notifying connector about account {:?} for amount {:?} and transaction hash {:?}. Please check your API.", account_id_clone, amount_clone, tx_hash)
-        })
-        .and_then(move |ret| {
-            trace!("Accounting system responded with {:?}", ret);
-            Ok(())
-        })
+        let ret = Retry::spawn(
+                ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
+                action,
+            )
+            .compat()
+            .map_err(move |_| {
+                error!("Exceeded max retries when notifying connector about account {:?} for amount {:?} and transaction hash {:?}. Please check your API.", account_id_clone, amount_clone, tx_hash)
+            })
+            .await?;
+        trace!("Accounting system responded with {:?}", ret);
+        Ok(())
     }
 
     /// Helper function which submits an Ethereum ledger transaction to `to` for `amount`.
@@ -571,14 +502,14 @@ where
     /// 2. construct the raw transaction using the nonce and the provided parameters
     /// 3. Sign the transaction (along with the chain id, due to EIP-155)
     /// 4. Submit the RLP-encoded transaction to the network
-    fn settle_to(
+    async fn settle_to(
         &self,
         to: Address,
         amount: U256,
         token_address: Option<Address>,
-    ) -> Box<dyn Future<Item = Option<H256>, Error = ()> + Send> {
+    ) -> Result<Option<H256>, ()> {
         if amount == U256::from(0) {
-            return Box::new(ok(None));
+            return Ok(None);
         }
         let web3 = self.web3.clone();
         let own_address = self.address.own_address;
@@ -592,97 +523,93 @@ where
         } else {
             to
         };
-        let gas_amount_fut = Either::A(Either::A(
-            web3.eth()
-                .estimate_gas(
-                    CallRequest {
-                        to: estimate_gas_destination,
-                        from: None,
-                        gas: None,
-                        gas_price: None,
-                        value: Some(value),
-                        data: Some(tx.data.clone().into()),
-                    },
-                    None,
-                )
-                .then(move |res| {
-                    Ok(match res {
-                        // if the gas estimation fails, use a default amount that will never
-                        // fail (eth transactions take 21000 gas, and ERC20 transactions are
-                        // between 50-70k)
-                        // This call will fail on Geth nodes until
-                        // https://github.com/ethereum/go-ethereum/issues/2586 is fixed
-                        Ok(amount) => amount,
-                        Err(_) => U256::from(100_000),
-                    })
-                }),
-        ));
-        let gas_price_fut = Either::A(Either::B(web3.eth().gas_price()));
-        let nonce_fut = Either::B(
-            web3.eth()
-                .transaction_count(own_address, Some(BlockNumber::Pending)),
-        );
-        Box::new(
-            join_all(vec![gas_price_fut, gas_amount_fut, nonce_fut])
-                .map_err(|err| error!("Error when querying gas price / nonce: {:?}", err))
-                .and_then(move |data| {
-                    tx.gas_price = data[0];
-                    tx.gas = data[1];
-                    tx.nonce = data[2];
 
-                    trace!(
-                        "Gas required for transaction: {}, gas price: {}",
-                        data[1],
-                        data[0]
-                    );
+        let gas_price = web3
+            .eth()
+            .gas_price()
+            .compat()
+            .map_err(|err| error!("could not fetch gas price {:?}", err))
+            .await?;
+        let gas_amount = match web3
+            .eth()
+            .estimate_gas(
+                CallRequest {
+                    to: estimate_gas_destination,
+                    from: None,
+                    gas: None,
+                    gas_price: None,
+                    value: Some(value),
+                    data: Some(tx.data.clone().into()),
+                },
+                None,
+            )
+            .compat()
+            .await
+        {
+            // if the gas estimation fails, use a default amount that will never
+            // fail (eth transactions take 21000 gas, and ERC20 transactions are
+            // between 50-70k)
+            // This call will fail on Geth nodes until
+            // https://github.com/ethereum/go-ethereum/issues/2586 is fixed
+            // Note: Was fixed in rust-web3 master: https://github.com/tomusdrw/rust-web3/pull/291
+            Ok(amount) => amount,
+            Err(_) => U256::from(100_000),
+        };
+        let nonce = web3
+            .eth()
+            .transaction_count(own_address, Some(BlockNumber::Pending))
+            .compat()
+            .map_err(|err| error!("could not fetch nonce {:?}", err))
+            .await?;
 
-                    let signed_tx = signer.sign_raw_tx(tx.clone(), chain_id); // 3
-                    let action = move || {
-                        trace!("Sending tx to Ethereum: {}", hex::encode(&signed_tx));
-                        web3.eth() // 4
-                            // TODO use send_transaction_with_confirmation
-                            .send_raw_transaction(signed_tx.clone().into())
-                            .map_err(|err| {
-                                error!("Error sending transaction to Ethereum ledger: {:?}", err);
-                                err
-                            })
-                    };
-                    Retry::spawn(
-                        ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
-                        action,
-                    )
-                    .map_err(move |_err| {
-                        error!("Unable to submit tx to Ethereum ledger");
-                    })
-                    .and_then(move |tx_hash| {
-                        debug!("Transaction submitted. Hash: {:?}", tx_hash);
-                        // TODO make sure the transaction is actually received
-                        Ok(Some(tx_hash))
-                    })
-                }),
+        tx.gas_price = gas_price;
+        tx.gas = gas_amount;
+        tx.nonce = nonce;
+
+        let signed_tx = signer.sign_raw_tx(tx.clone(), chain_id); // 3
+
+        let action = move || {
+            trace!("Sending tx to Ethereum: {}", hex::encode(&signed_tx));
+            web3.eth() // 4
+                // TODO use send_transaction_with_confirmation
+                .send_raw_transaction(signed_tx.clone().into())
+                .map_err(|err| {
+                    error!("Error sending transaction to Ethereum ledger: {:?}", err);
+                    err
+                })
+        };
+        let tx_hash = Retry::spawn(
+            ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
+            action,
         )
+        .compat()
+        .map_err(move |_err| {
+            error!("Unable to submit tx to Ethereum ledger");
+        })
+        .await?;
+        debug!("Transaction submitted. Hash: {:?}", tx_hash);
+        Ok(Some(tx_hash))
     }
 
     /// Helper function that returns the addresses associated with an
     /// account from a given string account id
-    fn load_account(
-        &self,
-        account_id: String,
-    ) -> impl Future<Item = (String, Addresses), Error = String> {
+    async fn load_account(&self, account_id: String) -> Result<(String, Addresses), String> {
         let store = self.store.clone();
         let addr = self.address;
         let account_id_clone = account_id.clone();
-        store
+        let addresses = store
             .load_account_addresses(vec![account_id.clone()])
             .map_err(move |_err| {
                 let error_msg = format!("[{:?}] Error getting account: {}", addr, account_id_clone);
                 error!("{}", error_msg);
                 error_msg
             })
-            .and_then(move |addresses| ok((account_id, addresses[0])))
+            .await?;
+        Ok((account_id, addresses[0]))
     }
 }
 
+#[async_trait]
 impl<S, Si, A> SettlementEngine for EthereumLedgerSettlementEngine<S, Si, A>
 where
     S: EthereumStore<Account = A>
@@ -702,14 +629,11 @@ where
     /// responds with its Ethereum and Token addresses. Upon
     /// receival of Ethereum and Token addresses from the peer, it saves them in
     /// the store.
-    fn create_account(
-        &self,
-        account_id: String,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
-        let self_clone = self.clone();
-        let store: S = self.store.clone();
-        let signer = self.signer.clone();
-        let address = self.address;
+    async fn create_account(&self, account_id: String) -> Result<ApiResponse, ApiError> {
+        // let self_clone = self.clone();
+        // let store: S = self.store.clone();
+        // let signer = self.signer.clone();
+        // let address = self.address;
 
         // We make a POST request to OUR connector's `messages`
         // endpoint. This will in turn send an outgoing
@@ -722,7 +646,7 @@ where
         let challenge = challenge.into_bytes();
         let challenge_clone = challenge.clone();
         let client = Client::new();
-        let mut url = self_clone.connector_url.clone();
+        let mut url = self.connector_url.clone();
 
         // send a payment details request (we send them a challenge)
         url.path_segments_mut()
@@ -740,146 +664,141 @@ where
                 .header("Idempotency-Key", idempotency_uuid.clone())
                 .body(body.clone())
                 .send()
+                .compat()
         };
 
-        Box::new(
-            Retry::spawn(
-                ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
-                action,
-            )
-            .map_err(move |err| {
-                let err = format!("Couldn't notify connector {:?}", err);
-                error!("{}", err);
-                ApiError::internal_server_error().detail(err)
-            })
-            .and_then(move |resp| {
-                parse_body_into_payment_details(resp).and_then(move |payment_details| {
-                    let data = prefixed_message(challenge_clone);
-                    let challenge_hash = Sha3::digest(&data);
-                    let recovered_address = payment_details.signature.recover(&challenge_hash);
-                    trace!("Received payment details {:?}", payment_details);
-                    match recovered_address {
-                        Ok(recovered_address) => {
-                            if recovered_address.as_bytes()
-                                != &payment_details.to.own_address.as_bytes()[..]
-                            {
-                                let error_msg = format!(
-                                    "Recovered address did not match: {:?}. Expected {:?}",
-                                    recovered_address.to_string(),
-                                    payment_details.to
-                                );
-                                error!("{}", error_msg);
-                                return Either::A(err(
-                                    ApiError::internal_server_error().detail(error_msg)
-                                ));
-                            }
-                        }
-                        Err(error_msg) => {
-                            let error_msg = format!("Could not recover address {:?}", error_msg);
-                            error!("{}", error_msg);
-                            return Either::A(err(
-                                ApiError::internal_server_error().detail(error_msg)
-                            ));
-                        }
-                    };
-
-                    // ACK BACK
-                    if let Some(challenge) = payment_details.challenge {
-                        // if we were challenged, we must respond
-                        let data = prefixed_message(challenge);
-                        let signature = signer.sign_message(&data);
-                        let resp = {
-                            // Respond with our address, a signature,
-                            // and no challenge, since we already sent
-                            // them one earlier
-                            let ret = PaymentDetailsResponse::new(address, signature, None);
-                            serde_json::to_string(&ret).unwrap()
-                        };
-                        let idempotency_uuid = Uuid::new_v4().to_hyphenated().to_string();
-                        let client = Client::new();
-                        let action = move || {
-                            client
-                                .post(url_clone.as_ref())
-                                .header("Content-Type", "application/octet-stream")
-                                .header("Idempotency-Key", idempotency_uuid.clone())
-                                .body(resp.clone())
-                                .send()
-                                .map_err(|err| error!("{}", err))
-                                .and_then(move |_| Ok(()))
-                        };
-
-                        tokio::executor::spawn(
-                            Retry::spawn(
-                                ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
-                                action,
-                            )
-                            .map_err(|err| error!("{:?}", err)),
-                        );
-                    }
-
-                    let data = HashMap::from_iter(vec![(account_id, payment_details.to)]);
-
-                    Either::B(
-                        store
-                            .save_account_addresses(data)
-                            .map_err(move |err| {
-                                let err_type = ApiErrorType {
-                                    r#type: &ProblemType::Default,
-                                    title: "Store connection error",
-                                    status: StatusCode::BAD_REQUEST,
-                                };
-                                let err = format!("Couldn't connect to store {:?}", err);
-                                error!("{}", err);
-                                ApiError::from_api_error_type(&err_type).detail(err)
-                            })
-                            .and_then(move |_| Ok(ApiResponse::Default)),
-                    )
-                })
-            }),
+        let resp = Retry::spawn(
+            ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
+            action,
         )
+        .compat()
+        .map_err(move |err| {
+            let err = format!("Couldn't notify connector {:?}", err);
+            error!("{}", err);
+            ApiError::internal_server_error().detail(err)
+        })
+        .await?;
+        let payment_details = parse_body_into_payment_details(resp).await?;
+
+        let data = prefixed_message(challenge_clone);
+        let challenge_hash = Sha3::digest(&data);
+        let recovered_address = payment_details.signature.recover(&challenge_hash);
+        trace!("Received payment details {:?}", payment_details);
+        match recovered_address {
+            Ok(recovered_address) => {
+                if recovered_address.as_bytes() != &payment_details.to.own_address.as_bytes()[..] {
+                    let error_msg = format!(
+                        "Recovered address did not match: {:?}. Expected {:?}",
+                        recovered_address.to_string(),
+                        payment_details.to
+                    );
+                    error!("{}", error_msg);
+                    return Err(ApiError::internal_server_error().detail(error_msg));
+                }
+            }
+            Err(error_msg) => {
+                let error_msg = format!("Could not recover address {:?}", error_msg);
+                error!("{}", error_msg);
+                return Err(ApiError::internal_server_error().detail(error_msg));
+            }
+        };
+
+        // ACK BACK
+        if let Some(challenge) = payment_details.challenge {
+            // if we were challenged, we must respond
+            let data = prefixed_message(challenge);
+            let signature = self.signer.sign_message(&data);
+            let resp = {
+                // Respond with our address, a signature,
+                // and no challenge, since we already sent
+                // them one earlier
+                let ret = PaymentDetailsResponse::new(self.address, signature, None);
+                serde_json::to_string(&ret).unwrap()
+            };
+            let idempotency_uuid = Uuid::new_v4().to_hyphenated().to_string();
+            let client = Client::new();
+            let action = move || {
+                client
+                    .post(url_clone.as_ref())
+                    .header("Content-Type", "application/octet-stream")
+                    .header("Idempotency-Key", idempotency_uuid.clone())
+                    .body(resp.clone())
+                    .send()
+                    .compat()
+                    .map_err(|err| error!("{}", err))
+            };
+
+            tokio::spawn(
+                Retry::spawn(
+                    ExponentialBackoff::from_millis(10).take(MAX_RETRIES),
+                    action,
+                )
+                .compat()
+                .map_err(|err| error!("{:?}", err)),
+            );
+        }
+
+        let data = HashMap::from_iter(vec![(account_id, payment_details.to)]);
+        self.store
+            .save_account_addresses(data)
+            .map_err(move |err| {
+                let err_type = ApiErrorType {
+                    r#type: &ProblemType::Default,
+                    title: "Store connection error",
+                    status: StatusCode::BAD_REQUEST,
+                };
+                let err = format!("Couldn't connect to store {:?}", err);
+                error!("{}", err);
+                ApiError::from_api_error_type(&err_type).detail(err)
+            })
+            .await?;
+        Ok(ApiResponse::Default)
     }
 
     // Deletes an account from the engine
-    fn delete_account(
-        &self,
-        account_id: String,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
+    async fn delete_account(&self, account_id: String) -> Result<ApiResponse, ApiError> {
         let store = self.store.clone();
         let account_id_clone = account_id.clone();
-        Box::new(
-            self.load_account(account_id.clone())
-                .map_err(|err| {
-                    let error_msg = format!("Error loading account {:?}", err);
-                    error!("{}", error_msg);
-                    ApiError::internal_server_error().detail(error_msg)
-                })
-                .and_then(move |_| {
-                    // if the load call succeeds, then the account exists and we must:
-                    // 1. delete their addresses
-                    // 2. clear their uncredited settlement amounts
-                    join_all(vec![
-                        store.clear_uncredited_settlement_amount(account_id_clone.clone()),
-                        store.delete_accounts(vec![account_id]),
-                    ])
-                    .map_err(move |err| {
-                        let error_msg = format!("Couldn't connect to store {:?}", err);
-                        error!("{}", error_msg);
-                        ApiError::internal_server_error().detail(error_msg)
-                    })
-                })
-                .and_then(move |_| Ok(ApiResponse::Default)),
-        )
+        // Ensure account exists
+        self.load_account(account_id.clone())
+            .map_err(|err| {
+                let error_msg = format!("Error loading account {:?}", err);
+                error!("{}", error_msg);
+                ApiError::internal_server_error().detail(error_msg)
+            })
+            .await?;
+
+        // if the load call succeeds, then the account exists and we must:
+        // 1. delete their addresses
+        // 2. clear their uncredited settlement amounts
+        store
+            .clear_uncredited_settlement_amount(account_id_clone.clone())
+            .map_err(|err| {
+                error!("Couldn't clear uncredit settlement amount {:?}", err);
+                ApiError::internal_server_error()
+            })
+            .await?;
+        store
+            .delete_accounts(vec![account_id])
+            .map_err(move |_| {
+                let error_msg = "Couldn't delete account".to_string();
+                error!("{}", error_msg);
+                ApiError::internal_server_error()
+            })
+            .await?;
+
+        Ok(ApiResponse::Default)
     }
 
     /// Settlement Engine's function that corresponds to the
     /// /accounts/:id/messages endpoint (POST).
     /// The body is a challenge issued by the peer's settlement engine which we
     /// must sign to prove ownership of our address
-    fn receive_message(
+    async fn receive_message(
         &self,
         account_id: String,
         body: Vec<u8>,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
+    ) -> Result<ApiResponse, ApiError> {
         let address = self.address;
         let store = self.store.clone();
         // We are only returning our information, so
@@ -887,10 +806,10 @@ where
         // provided account.
         // If we received a SYN, we respond with a signed message
         if let Ok(req) = serde_json::from_slice::<PaymentDetailsRequest>(&body) {
-            debug!(
-                "Received account creation request. Responding with our account's details {} {:?}",
-                account_id, address
-            );
+            // debug!(
+            //     "Received account creation request. Responding with our account's details {} {:?}",
+            //     account_id, address
+            // );
             // Otherwise, we save the received address
             let data = prefixed_message(req.challenge);
             let signature = self.signer.sign_message(&data);
@@ -903,52 +822,48 @@ where
                 let ret = PaymentDetailsResponse::new(address, signature, Some(challenge));
                 serde_json::to_vec(&ret).unwrap()
             };
-            Box::new(ok(ApiResponse::Data(resp.into())))
+            Ok(ApiResponse::Data(resp.into()))
         } else if let Ok(resp) = serde_json::from_slice::<PaymentDetailsResponse>(&body) {
             debug!("Received payment details: {:?}", resp);
-            let guard = self.challenges.read();
-            let fut = if let Some(challenge) = (*guard).get(&account_id) {
-                // if we sent them a challenge, we will verify the received
-                // signature and address, and if sig verification passes, we'll
-                // save them in our store
-                let data = prefixed_message(challenge.to_vec());
-                let challenge_hash = Sha3::digest(&data);
-                let recovered_address = resp.signature.recover(&challenge_hash);
-                match recovered_address {
-                    Ok(recovered_address) => {
-                        Either::A(
-                            if recovered_address.as_bytes() != &resp.to.own_address.as_bytes()[..] {
-                                Either::A(ok(()))
-                            } else {
-                                // save to the store
-                                let data = HashMap::from_iter(vec![(account_id, resp.to)]);
-                                Either::B(store.save_account_addresses(data).map_err(move |err| {
-                                    let error_msg = format!("Couldn't connect to store {:?}", err);
-                                    error!("{}", error_msg);
-                                    ApiError::internal_server_error().detail(error_msg)
-                                }))
-                            },
-                        )
-                    }
-                    Err(error_msg) => {
-                        let error_msg = format!("Could not recover address {:?}", error_msg);
-                        let err_type = ApiErrorType {
-                            r#type: &ProblemType::Default,
-                            title: "Signature verification failure",
-                            status: StatusCode::BAD_REQUEST,
-                        };
-                        error!("{}", error_msg);
-                        Either::B(err(
-                            ApiError::from_api_error_type(&err_type).detail(error_msg)
-                        ))
-                    }
-                }
+            let challenge = self.challenges.read().clone();
+            let challenge = if let Some(challenge) = challenge.get(&account_id) {
+                challenge
             } else {
-                Either::B(ok(()))
+                // if we did not send them a challenge, do nothing
+                return Ok(ApiResponse::Default);
             };
 
-            Box::new(fut.and_then(move |_| Ok(ApiResponse::Default)))
+            // if we sent them a challenge, we will verify the received
+            // signature and address, and if sig verification passes, we'll
+            // save them in our store
+            let data = prefixed_message(challenge.to_vec());
+            let challenge_hash = Sha3::digest(&data);
+            match resp.signature.recover(&challenge_hash) {
+                Ok(recovered_address) => {
+                    if recovered_address.as_bytes() == &resp.to.own_address.as_bytes()[..] {
+                        // If the signature was correct, save the provided address to the store
+                        let data = HashMap::from_iter(vec![(account_id, resp.to)]);
+                        store
+                            .save_account_addresses(data)
+                            .map_err(move |err| {
+                                let error_msg = format!("Couldn't connect to store {:?}", err);
+                                error!("{}", error_msg);
+                                ApiError::internal_server_error() // .detail(error_msg)
+                            })
+                            .await?;
+                        Ok(ApiResponse::Default)
+                    } else {
+                        // If the signature did not match, we should return an error
+                        Err(ApiError::bad_request())
+                    }
+                }
+                Err(error_msg) => {
+                    error!("{}", error_msg);
+                    Err(ApiError::bad_request())
+                }
+            }
         } else {
+            // Non PaymentDetails requests/responses should be errored out
             let error_msg = "Ignoring message that was neither a PaymentDetailsRequest nor a PaymentDetailsResponse";
             error!("{}", error_msg);
             let err_type = ApiErrorType {
@@ -956,9 +871,7 @@ where
                 title: "Invalid message type",
                 status: StatusCode::BAD_REQUEST,
             };
-            Box::new(err(
-                ApiError::from_api_error_type(&err_type).detail(error_msg)
-            ))
+            Err(ApiError::from_api_error_type(&err_type).detail(error_msg))
         }
     }
 
@@ -967,107 +880,113 @@ where
     /// onchain transaction to the Ethereum Address that corresponds to the
     /// provided account id, for the amount specified in the message's body. If
     /// the account is associated with an ERC20 token, it makes an ERC20 call instead.
-    fn send_money(
+    async fn send_money(
         &self,
         account_id: String,
         body: Quantity,
-    ) -> Box<dyn Future<Item = ApiResponse, Error = ApiError> + Send> {
-        let self_clone = self.clone();
-        let store = self.store.clone();
+    ) -> Result<ApiResponse, ApiError> {
         let engine_scale = self.asset_scale;
         let connector_scale = body.scale;
+
         let amount_from_connector = match BigUint::from_str(&body.amount) {
             Ok(a) => a,
             Err(_err) => {
                 let error_msg = format!("Error converting to BigUint {:?}", _err);
                 error!("{:?}", error_msg);
-                return Box::new(err(
-                    ApiError::from_api_error_type(&CONVERSION_ERROR_TYPE).detail(error_msg)
-                ));
+                return Err(ApiError::from_api_error_type(&CONVERSION_ERROR_TYPE).detail(error_msg));
             }
         };
         let (amount, precision_loss) =
             scale_with_precision_loss(amount_from_connector, engine_scale, connector_scale);
 
-        Box::new(
-            self.store
-                .load_uncredited_settlement_amount(account_id.clone(), engine_scale)
-                .map_err(move |err| {
-                    let error_msg = format!("Error loading leftovers {:?}", err);
-                    error!("{}", error_msg);
-                    ApiError::internal_server_error().detail(error_msg)
-                })
-                .join(self_clone.load_account(account_id).map_err(move |err| {
-                    let error_msg = format!("Error loading account {:?}", err);
-                    error!("{}", error_msg);
-                    ApiError::internal_server_error().detail(error_msg)
-                }))
-                .and_then(
-                    move |(uncredited_settlement_amount, (account_id, addresses))| {
-                        debug!(
-                            "Sending settlement to account {} (Ethereum address: {}) for amount: {}{}",
-                            account_id,
-                            addresses.own_address,
-                            amount,
-                            if let Some(token_address) = addresses.token_address {
-                                format!(" (token address: {}", token_address)
-                            } else {
-                                "".to_string()
-                            }
-                        );
+        let uncredited_settlement_amount = self
+            .store
+            .load_uncredited_settlement_amount(account_id.clone(), engine_scale)
+            .map_err(move |err| {
+                let error_msg = format!("Error loading leftovers {:?}", err);
+                error!("{}", error_msg);
+                ApiError::internal_server_error().detail(error_msg)
+            })
+            .await?;
+        let (account_id, addresses) = self
+            .load_account(account_id)
+            .map_err(move |err| {
+                let error_msg = format!("Error loading account {:?}", err);
+                error!("{}", error_msg);
+                ApiError::internal_server_error().detail(error_msg)
+            })
+            .await?;
 
-                        // Typecast to web3::U256
-                        let total_amount = amount + uncredited_settlement_amount;
-                        let total_amount = match U256::from_dec_str(&total_amount.to_string()) {
-                            Ok(a) => a,
-                            Err(_err) => {
-                                let error_msg = format!("Error converting to U256 {:?}", _err);
-                                error!("{:?}", error_msg);
-                                return Either::A(err(ApiError::from_api_error_type(&CONVERSION_ERROR_TYPE).detail(error_msg)))
-                            }
-                        };
+        debug!(
+            "Sending settlement to account {} (Ethereum address: {}) for amount: {}{}",
+            account_id,
+            addresses.own_address,
+            amount,
+            if let Some(token_address) = addresses.token_address {
+                format!(" (token address: {}", token_address)
+            } else {
+                "".to_string()
+            }
+        );
 
-                        Either::B(join_all(vec![
-                            Either::A(self_clone.settle_to(addresses.own_address, total_amount, addresses.token_address).and_then(move |_| Ok(()))),
-                            Either::B(store.save_uncredited_settlement_amount(account_id, (precision_loss, connector_scale)))
-                        ])
-                        .map_err(move |_| {
-                            let error_msg = "Error connecting to the blockchain.".to_string();
-                            error!("{}", error_msg);
-                            let err_type = ApiErrorType {
-                                r#type: &ProblemType::Default,
-                                title: "Blockchain connection error",
-                                status: StatusCode::BAD_GATEWAY,
-                            };
-                            ApiError::from_api_error_type(&err_type).detail(error_msg)
-                        }))
-                    },
-                )
-                .and_then(move |_| Ok(ApiResponse::Default)),
-        )
+        // Typecast to web3::U256
+        let total_amount = amount + uncredited_settlement_amount;
+        let total_amount = match U256::from_dec_str(&total_amount.to_string()) {
+            Ok(a) => a,
+            Err(_err) => {
+                let error_msg = format!("Error converting to U256 {:?}", _err);
+                error!("{:?}", error_msg);
+                return Err(ApiError::from_api_error_type(&CONVERSION_ERROR_TYPE).detail(error_msg));
+            }
+        };
+
+        // Execute the settlement
+        self.settle_to(addresses.own_address, total_amount, addresses.token_address)
+            .map_err(move |_| {
+                let error_msg = "Error connecting to the blockchain.".to_string();
+                error!("{}", error_msg);
+                let err_type = ApiErrorType {
+                    r#type: &ProblemType::Default,
+                    title: "Blockchain connection error",
+                    status: StatusCode::BAD_GATEWAY,
+                };
+                ApiError::from_api_error_type(&err_type).detail(error_msg)
+            })
+            .await?;
+
+        // Save any leftovers
+        self.store
+            .save_uncredited_settlement_amount(account_id, (precision_loss, connector_scale))
+            .map_err(move |_| {
+                let error_msg = "Couldn't save uncredited settlement amount.".to_string();
+                error!("{}", error_msg);
+                ApiError::internal_server_error()
+            })
+            .await?;
+
+        Ok(ApiResponse::Default)
     }
 }
 
-fn parse_body_into_payment_details(
+async fn parse_body_into_payment_details(
     resp: HttpResponse,
-) -> impl Future<Item = PaymentDetailsResponse, Error = ApiError> {
-    resp.into_body()
-        .concat2()
+) -> Result<PaymentDetailsResponse, ApiError> {
+    let body = resp
+        .bytes()
         .map_err(|err| {
             let err = format!("Couldn't retrieve body {:?}", err);
             error!("{}", err);
             ApiError::internal_server_error().detail(err)
         })
-        .and_then(move |body| {
-            serde_json::from_slice::<PaymentDetailsResponse>(&body).map_err(|err| {
-                let err = format!(
-                    "Couldn't parse body {:?} into payment details {:?}",
-                    body, err
-                );
-                error!("{}", err);
-                ApiError::internal_server_error().detail(err)
-            })
-        })
+        .await?;
+    serde_json::from_slice::<PaymentDetailsResponse>(&body).map_err(|err| {
+        let err = format!(
+            "Couldn't parse body {:?} into payment details {:?}",
+            body, err
+        );
+        error!("{}", err);
+        ApiError::internal_server_error().detail(err)
+    })
 }
 
 fn prefixed_message(challenge: Vec<u8>) -> Vec<u8> {
@@ -1077,7 +996,6 @@ fn prefixed_message(challenge: Vec<u8>) -> Vec<u8> {
 }
 
 // Redis helpers to run binaries
-
 #[cfg(feature = "redis")]
 pub mod redis_bin {
     use super::*;
@@ -1087,37 +1005,36 @@ pub mod redis_bin {
 
     #[doc(hidden)]
     #[allow(clippy::all)]
-    pub fn run_ethereum_engine(opt: EthereumLedgerOpt) -> impl Future<Item = (), Error = ()> {
+    pub async fn run_ethereum_engine(opt: EthereumLedgerOpt) -> Result<(), ()> {
         // TODO make key compatible with
         // https://github.com/tendermint/signatory to have HSM sigs
 
-        EthereumLedgerRedisStoreBuilder::new(opt.redis_connection.clone())
+        let ethereum_store = EthereumLedgerRedisStoreBuilder::new(opt.redis_connection.clone())
             .connect()
-            .and_then(move |ethereum_store| {
-                let engine_fut = EthereumLedgerSettlementEngineBuilder::new(
-                    ethereum_store.clone(),
-                    opt.private_key.clone(),
-                )
-                .ethereum_endpoint(&opt.ethereum_url)
-                .chain_id(opt.chain_id)
-                .connector_url(&opt.connector_url)
-                .confirmations(opt.confirmations)
-                .asset_scale(opt.asset_scale)
-                .poll_frequency(opt.poll_frequency)
-                .watch_incoming(opt.watch_incoming)
-                .token_address(opt.token_address)
-                .connect();
+            .await?;
 
-                engine_fut.and_then(move |engine| {
-                    let api = create_settlement_engine_filter(engine, ethereum_store);
-                    tokio::spawn(warp::serve(api).bind(opt.settlement_api_bind_address));
-                    info!(
-                        "Ethereum Settlement Engine listening on: {}",
-                        &opt.settlement_api_bind_address
-                    );
-                    Ok(())
-                })
-            })
+        let engine = EthereumLedgerSettlementEngineBuilder::new(
+            ethereum_store.clone(),
+            opt.private_key.clone(),
+        )
+        .ethereum_endpoint(&opt.ethereum_url)
+        .chain_id(opt.chain_id)
+        .connector_url(&opt.connector_url)
+        .confirmations(opt.confirmations)
+        .asset_scale(opt.asset_scale)
+        .poll_frequency(opt.poll_frequency)
+        .watch_incoming(opt.watch_incoming)
+        .token_address(opt.token_address)
+        .connect()
+        .await;
+
+        let api = create_settlement_engine_filter(engine, ethereum_store);
+        tokio::spawn(warp::serve(api).bind(opt.settlement_api_bind_address));
+        info!(
+            "Ethereum Settlement Engine listening on: {}",
+            &opt.settlement_api_bind_address
+        );
+        Ok(())
     }
 
     #[derive(Deserialize, Clone)]
@@ -1158,7 +1075,6 @@ pub mod redis_bin {
 mod tests {
     use super::*;
     use crate::utils::test_helpers::{
-        block_on,
         fixtures::{ALICE, BOB, MESSAGES_API},
         test_engine, test_store, TestAccount,
     };
@@ -1174,8 +1090,8 @@ mod tests {
             "cc96601bc52293b53c4736a12af9130abf347669b3813f9ec4cafdf6991b087e"
         ));
     }
-    #[test]
-    fn test_create_get_account() {
+    #[tokio::test]
+    async fn test_create_get_account() {
         let bob: TestAccount = BOB.clone();
 
         let challenge = Uuid::new_v4().to_hyphenated().to_string();
@@ -1211,12 +1127,13 @@ mod tests {
             &connector_url,
             None,
             false,
-        );
+        )
+        .await;
 
         // the signed message does not match.
         // (We are not able to make Mockito capture the challenge and return a
         // signature on it.)
-        let ret: ApiError = block_on(engine.create_account(bob.id)).unwrap_err();
+        let ret: ApiError = engine.create_account(bob.id).await.unwrap_err();
         assert_eq!(ret.status.as_u16(), 500);
         let error_msg = ret.detail.unwrap();
         assert!(error_msg.starts_with("Recovered address did not match:"));
@@ -1225,8 +1142,8 @@ mod tests {
         m.assert();
     }
 
-    #[test]
-    fn test_receive_message() {
+    #[tokio::test]
+    async fn test_receive_message() {
         let bob: TestAccount = BOB.clone();
 
         let challenge = Uuid::new_v4().to_hyphenated().to_string().into_bytes();
@@ -1242,11 +1159,12 @@ mod tests {
             "http://127.0.0.1:8770",
             None,
             false,
-        );
+        )
+        .await;
 
         // Alice's engine receives a challenge by Bob.
         let c = serde_json::to_vec(&PaymentDetailsRequest::new(challenge)).unwrap();
-        let ret = block_on(engine.receive_message(bob.id.to_string(), c)).unwrap();
+        let ret = engine.receive_message(bob.id.to_string(), c).await.unwrap();
         let alice_addrs = Addresses {
             own_address: ALICE.address,
             token_address: None,
@@ -1274,7 +1192,7 @@ mod tests {
         };
         let c =
             serde_json::to_vec(&PaymentDetailsResponse::new(bob_addrs, signature, None)).unwrap();
-        let ret = block_on(engine.receive_message(bob.id.to_string(), c)).unwrap();
+        let ret = engine.receive_message(bob.id.to_string(), c).await.unwrap();
         if let ApiResponse::Data(_) = ret {
             panic!("got data when we expected default ret")
         }
@@ -1282,7 +1200,7 @@ mod tests {
         // check that alice's store got updated with bob's addresses
         let addrs = store
             .load_account_addresses(vec![bob.id.to_string()])
-            .wait()
+            .await
             .unwrap();
         assert_eq!(addrs[0], bob_addrs);
     }
