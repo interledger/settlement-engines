@@ -1,10 +1,10 @@
+#![type_length_limit = "6000000"]
 #![recursion_limit = "128"]
 
 use futures::future::join_all;
-use futures::Future;
 use ilp_node::InterledgerNode;
 use serde_json::{self, json};
-use tokio::runtime::Builder as RuntimeBuilder;
+use std::time::Duration;
 
 mod test_helpers;
 use test_helpers::{
@@ -16,7 +16,7 @@ use test_helpers::{
 use test_helpers::redis_helpers::*;
 
 #[cfg(feature = "redis")]
-#[test]
+#[tokio::test]
 /// In this test we have Alice and Bob who have peered with each other and run
 /// XRP ledger settlement engines. Alice proceeds to make SPSP payments to
 /// Bob, until she eventually reaches Bob's `settle_threshold`. Once that's
@@ -24,7 +24,7 @@ use test_helpers::redis_helpers::*;
 /// immediately applies the balance change. Bob's engine listens for incoming
 /// transactions, and once the transaction has sufficient confirmations it
 /// lets Bob's connector know about it, so that it adjusts their credit.
-fn xrp_ledger_settlement() {
+async fn xrp_ledger_settlement() {
     // Nodes 1 and 2 are peers, Node 2 is the parent of Node 3
     let _ = env_logger::try_init();
     let context = TestContext::new();
@@ -52,11 +52,6 @@ fn xrp_ledger_settlement() {
         start_xrp_engine("http://localhost:3011", alice_redis_port, node1_engine);
     let mut engine_bob = start_xrp_engine("http://localhost:3021", bob_redis_port, node2_engine);
     std::thread::sleep(std::time::Duration::from_secs(10));
-
-    let mut runtime = RuntimeBuilder::new()
-        .panic_handler(|err| std::panic::resume_unwind(err))
-        .build()
-        .unwrap();
 
     let node1: InterledgerNode = serde_json::from_value(json!({
         "ilp_address": "example.alice",
@@ -103,15 +98,13 @@ fn xrp_ledger_settlement() {
         "settlement_engine_url": format!("http://localhost:{}", node1_engine),
     });
 
-    let alice_fut = create_account_on_node(node1_http, alice_on_alice, "admin")
-        .and_then(move |_| create_account_on_node(node1_http, bob_on_alice, "admin"));
-
-    runtime.spawn(
-        node1
-            .serve()
-            .and_then(move |_| alice_fut)
-            .and_then(move |_| Ok(())),
-    );
+    node1.serve().await.unwrap();
+    create_account_on_node(node1_http, alice_on_alice, "admin")
+        .await
+        .unwrap();
+    create_account_on_node(node1_http, bob_on_alice, "admin")
+        .await
+        .unwrap();
 
     let bob_on_bob = json!({
         "ilp_address": "example.bob",
@@ -135,137 +128,115 @@ fn xrp_ledger_settlement() {
         "settlement_engine_url": format!("http://localhost:{}", node2_engine),
     });
 
-    let bob_fut = create_account_on_node(node2_http, bob_on_bob, "admin")
-        .and_then(move |_| create_account_on_node(node2_http, alice_on_bob, "admin"));
+    node2.serve().await.unwrap();
+    create_account_on_node(node2_http, bob_on_bob, "admin")
+        .await
+        .unwrap();
+    create_account_on_node(node2_http, alice_on_bob, "admin")
+        .await
+        .unwrap();
 
-    runtime.spawn(
-        node2
-            .serve()
-            .and_then(move |_| bob_fut)
-            .and_then(move |_| Ok(())),
+    let get_balances = move || {
+        join_all(vec![
+            get_balance("bob", node1_http, "bob_password"),
+            get_balance("alice", node2_http, "alice_password"),
+        ])
+    };
+
+    // first spend
+    send_money_to_username(node1_http, node2_http, 10, "bob", "alice", "in_alice")
+        .await
+        .unwrap();
+    let ret = get_balances().await;
+    let ret: Vec<_> = ret.into_iter().map(|r| r.unwrap()).collect();
+    assert_eq!(
+        ret[0],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: 10e-6
+        }
+    );
+    assert_eq!(
+        ret[1],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: -10e-6
+        }
     );
 
-    runtime
-        .block_on(
-            // Wait for the nodes to spin up
-            delay(1000)
-                .map_err(|_| panic!("Something strange happened"))
-                .and_then(move |_| {
-                    let send1 = send_money_to_username(
-                        node1_http, node2_http, 10, "bob", "alice", "in_alice",
-                    );
-                    let send2 = send_money_to_username(
-                        node1_http, node2_http, 20, "bob", "alice", "in_alice",
-                    );
-                    let send3 = send_money_to_username(
-                        node1_http, node2_http, 39, "bob", "alice", "in_alice",
-                    );
-                    let send4 = send_money_to_username(
-                        node1_http, node2_http, 1, "bob", "alice", "in_alice",
-                    );
-
-                    let get_balances = move || {
-                        join_all(vec![
-                            get_balance("bob", node1_http, "bob_password"),
-                            get_balance("alice", node2_http, "alice_password"),
-                        ])
-                    };
-
-                    send1
-                        .and_then(move |_| get_balances())
-                        .and_then(move |ret| {
-                            assert_eq!(
-                                ret[0],
-                                BalanceData {
-                                    asset_code: "XRP".to_owned(),
-                                    balance: 10e-6
-                                }
-                            );
-                            assert_eq!(
-                                ret[1],
-                                BalanceData {
-                                    asset_code: "XRP".to_owned(),
-                                    balance: -10e-6
-                                }
-                            );
-                            Ok(())
-                        })
-                        .and_then(move |_| send2)
-                        .and_then(move |_| get_balances())
-                        .and_then(move |ret| {
-                            assert_eq!(
-                                ret[0],
-                                BalanceData {
-                                    asset_code: "XRP".to_owned(),
-                                    balance: 30e-6
-                                }
-                            );
-                            assert_eq!(
-                                ret[1],
-                                BalanceData {
-                                    asset_code: "XRP".to_owned(),
-                                    balance: -30e-6
-                                }
-                            );
-                            Ok(())
-                        })
-                        .and_then(move |_| send3)
-                        .and_then(move |_| get_balances())
-                        .and_then(move |ret| {
-                            assert_eq!(
-                                ret[0],
-                                BalanceData {
-                                    asset_code: "XRP".to_owned(),
-                                    balance: 69e-6
-                                }
-                            );
-                            assert_eq!(
-                                ret[1],
-                                BalanceData {
-                                    asset_code: "XRP".to_owned(),
-                                    balance: -69e-6
-                                }
-                            );
-                            Ok(())
-                        })
-                        // Up to here, Alice's balance should be -69 and Bob's
-                        // balance should be 69. Once we make 1 more payment, we
-                        // exceed the settle_threshold and thus a settlement is made
-                        .and_then(move |_| send4)
-                        .and_then(move |_| {
-                            // Wait a few seconds so that the receiver's engine
-                            // gets the data and applies it (longer than the
-                            // Ethereum engine since we're using a public
-                            // testnet here)
-                            delay(10000)
-                                .map_err(move |_| panic!("Weird error."))
-                                .and_then(move |_| {
-                                    // Since the credit connection reached -70, and the
-                                    // settle_to is -10, a 60 Wei transaction is made.
-                                    get_balances().and_then(move |ret| {
-                                        assert_eq!(
-                                            ret[0],
-                                            BalanceData {
-                                                asset_code: "XRP".to_owned(),
-                                                balance: 10e-6
-                                            }
-                                        );
-                                        assert_eq!(
-                                            ret[1],
-                                            BalanceData {
-                                                asset_code: "XRP".to_owned(),
-                                                balance: -10e-6
-                                            }
-                                        );
-                                        engine_alice.kill().unwrap();
-                                        alice_engine_redis.kill().unwrap();
-                                        engine_bob.kill().unwrap();
-                                        bob_engine_redis.kill().unwrap();
-                                        Ok(())
-                                    })
-                                })
-                        })
-                }),
-        )
+    // second psend
+    send_money_to_username(node1_http, node2_http, 20, "bob", "alice", "in_alice")
+        .await
         .unwrap();
+    let ret = get_balances().await;
+    let ret: Vec<_> = ret.into_iter().map(|r| r.unwrap()).collect();
+    assert_eq!(
+        ret[0],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: 30e-6
+        }
+    );
+    assert_eq!(
+        ret[1],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: -30e-6
+        }
+    );
+
+    // 3rd spend, still below settlement limit
+    send_money_to_username(node1_http, node2_http, 39, "bob", "alice", "in_alice")
+        .await
+        .unwrap();
+    let ret = get_balances().await;
+    let ret: Vec<_> = ret.into_iter().map(|r| r.unwrap()).collect();
+    assert_eq!(
+        ret[0],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: 69e-6
+        }
+    );
+    assert_eq!(
+        ret[1],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: -69e-6
+        }
+    );
+
+    // Up to here, Alice's balance should be -69 and Bob's
+    // balance should be 69. Once we make 1 more payment, we
+    // exceed the settle_threshold and thus a settlement is made
+    send_money_to_username(node1_http, node2_http, 1, "bob", "alice", "in_alice")
+        .await
+        .unwrap();
+    // Wait a few seconds so that the receiver's engine
+    // gets the data and applies it (longer than the
+    // Ethereum engine since we're using a public
+    // testnet here)
+    tokio::time::delay_for(Duration::from_secs(10)).await;
+    // Since the credit connection reached -70, and the
+    // settle_to is -10, a 60 Wei transaction is made.
+    let ret = get_balances().await;
+    let ret: Vec<_> = ret.into_iter().map(|r| r.unwrap()).collect();
+    assert_eq!(
+        ret[0],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: 10e-6
+        }
+    );
+    assert_eq!(
+        ret[1],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: -10e-6
+        }
+    );
+    engine_alice.kill().unwrap();
+    alice_engine_redis.kill().unwrap();
+    engine_bob.kill().unwrap();
+    bob_engine_redis.kill().unwrap();
 }

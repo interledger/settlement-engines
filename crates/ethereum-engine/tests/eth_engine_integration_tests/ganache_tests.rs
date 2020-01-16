@@ -1,4 +1,5 @@
 use super::utils::*;
+use futures::compat::Future01CompatExt;
 use lazy_static::lazy_static;
 use mockito;
 use num_bigint::BigUint;
@@ -8,7 +9,7 @@ use std::collections::HashMap;
 use std::iter::FromIterator;
 use std::time::Duration;
 use web3::contract::{Contract, Options};
-use web3::{api::Web3, futures::future::Future, transports::Http, types::U256};
+use web3::{api::Web3, transports::Http, types::U256};
 
 use ilp_settlement_ethereum::utils::types::{Addresses, EthereumStore};
 use interledger_settlement::core::types::{
@@ -34,8 +35,8 @@ lazy_static! {
     );
 }
 
-#[test]
-fn test_send_erc20() {
+#[tokio::test]
+async fn test_send_erc20() {
     let ganache_port = 8546;
     let mut ganache_pid = start_ganache(ganache_port);
     let _ = env_logger::try_init();
@@ -59,7 +60,8 @@ fn test_send_erc20() {
             alice.address,
         )
         .expect("Correct parameters are passed to the constructor.")
-        .wait()
+        .compat()
+        .await
         .unwrap();
 
     let token_address = contract.address();
@@ -73,7 +75,7 @@ fn test_send_erc20() {
                 token_address: Some(token_address),
             },
         )]))
-        .wait()
+        .await
         .unwrap();
 
     let bob_store = test_store(bob.clone(), false, false, true);
@@ -85,7 +87,7 @@ fn test_send_erc20() {
                 token_address: Some(token_address),
             },
         )]))
-        .wait()
+        .await
         .unwrap();
 
     let bob_mock = mockito::mock("POST", "/accounts/42/settlements")
@@ -105,7 +107,8 @@ fn test_send_erc20() {
         8546,
         Some(token_address),
         true,
-    );
+    )
+    .await;
 
     let alice_engine = test_engine(
         alice_store.clone(),
@@ -115,27 +118,35 @@ fn test_send_erc20() {
         8546,
         Some(token_address),
         false, // alice sends the transaction to bob (set it up so that she doesn't listen for inc txs)
-    );
+    )
+    .await;
 
     // 100 Gwei
-    let ret = block_on(alice_engine.send_money(bob.id.to_string(), Quantity::new(100, 9))).unwrap();
+    let ret = alice_engine
+        .send_money(bob.id.to_string(), Quantity::new(100u64, 9))
+        .await
+        .unwrap();
     if let ApiResponse::Data(_) = ret {
         panic!("expected empty default ret type for send money")
     }
 
     // wait a few seconds so that the receiver's engine that does the polling
-    std::thread::sleep(Duration::from_millis(2000));
+    tokio::time::delay_for(Duration::from_secs(2)).await;
 
     // did token balances update correctly?
     let token_balance = |address| {
-        let balance: U256 = contract
-            .query("balanceOf", address, None, Options::default(), None)
-            .wait()
-            .unwrap();
-        balance
+        let contract_clone = contract.clone();
+        async move {
+            let balance: U256 = contract_clone
+                .query("balanceOf", address, None, Options::default(), None)
+                .compat()
+                .await
+                .unwrap();
+            balance
+        }
     };
-    let alice_balance = token_balance(alice.address);
-    let bob_balance = token_balance(bob.address);
+    let alice_balance = token_balance(alice.address).await;
+    let bob_balance = token_balance(bob.address).await;
     assert_eq!(
         alice_balance,
         U256::from_dec_str("999999999900000000000").unwrap()
@@ -146,8 +157,8 @@ fn test_send_erc20() {
     bob_mock.assert();
 }
 
-#[test]
-fn test_send_eth() {
+#[tokio::test]
+async fn test_send_eth() {
     let _ = env_logger::try_init();
     let alice = ALICE.clone();
     let bob = BOB.clone();
@@ -161,7 +172,7 @@ fn test_send_eth() {
                 token_address: None,
             },
         )]))
-        .wait()
+        .await
         .unwrap();
 
     let bob_store = test_store(bob.clone(), false, false, true);
@@ -173,7 +184,7 @@ fn test_send_eth() {
                 token_address: None,
             },
         )]))
-        .wait()
+        .await
         .unwrap();
 
     let mut ganache_pid = start_ganache(8545);
@@ -195,7 +206,8 @@ fn test_send_eth() {
         8545,
         None,
         true,
-    );
+    )
+    .await;
 
     let alice_engine = test_engine(
         alice_store.clone(),
@@ -205,11 +217,15 @@ fn test_send_eth() {
         8545,
         None,
         false, // alice sends the transaction to bob (set it up so that she doesn't listen for inc txs)
-    );
+    )
+    .await;
 
     // Connector sends an amount that's smaller than what the engine can
     // process, leftovers must be stored
-    let ret = block_on(alice_engine.send_money(bob.id.to_string(), Quantity::new(9, 19))).unwrap();
+    let ret = alice_engine
+        .send_money(bob.id.to_string(), Quantity::new(9, 19))
+        .await
+        .unwrap();
     if let ApiResponse::Data(_) = ret {
         panic!("expected empty default ret type for send money")
     }
@@ -218,14 +234,17 @@ fn test_send_eth() {
     assert_eq!(
         alice_store
             .get_uncredited_settlement_amount(bob.id.to_string())
-            .wait()
+            .await
             .unwrap(),
         (BigUint::from(9u32), 19)
     );
 
     // the connector sends one more request, still less than the minimum amount,
     // but this puts the leftovers over the min amount for the next call
-    let ret = block_on(alice_engine.send_money(bob.id.to_string(), Quantity::new(11, 20))).unwrap();
+    let ret = alice_engine
+        .send_money(bob.id.to_string(), Quantity::new(11, 20))
+        .await
+        .unwrap();
     if let ApiResponse::Data(_) = ret {
         panic!("expected empty default ret type for send money")
     }
@@ -234,12 +253,15 @@ fn test_send_eth() {
     assert_eq!(
         alice_store
             .get_uncredited_settlement_amount(bob.id.to_string())
-            .wait()
+            .await
             .unwrap(),
         (BigUint::from(101u32), 20)
     );
 
-    let ret = block_on(alice_engine.send_money(bob.id.to_string(), Quantity::new(100, 9))).unwrap();
+    let ret = alice_engine
+        .send_money(bob.id.to_string(), Quantity::new(100u64, 9))
+        .await
+        .unwrap();
     if let ApiResponse::Data(_) = ret {
         panic!("expected empty default ret type for send money")
     }
@@ -248,7 +270,7 @@ fn test_send_eth() {
     assert_eq!(
         alice_store
             .get_uncredited_settlement_amount(bob.id.to_string())
-            .wait()
+            .await
             .unwrap(),
         (BigUint::from(1u32), 20)
     );
@@ -258,8 +280,18 @@ fn test_send_eth() {
     let (eloop, transport) = Http::new("http://localhost:8545").unwrap();
     eloop.into_remote();
     let web3 = Web3::new(transport);
-    let alice_balance = web3.eth().balance(alice.address, None).wait().unwrap();
-    let bob_balance = web3.eth().balance(bob.address, None).wait().unwrap();
+    let alice_balance = web3
+        .eth()
+        .balance(alice.address, None)
+        .compat()
+        .await
+        .unwrap();
+    let bob_balance = web3
+        .eth()
+        .balance(bob.address, None)
+        .compat()
+        .await
+        .unwrap();
     let expected_alice = U256::from_dec_str("99999579899999999999").unwrap(); // 99ether - 21k gas - 100 gwei - 1 wei (only 1 tranasaction was made, despite the 2 zero-value settlement requests)
     let expected_bob = U256::from_dec_str("100000000100000000001").unwrap(); // 100 ether + 100 gwei + 1 wei
     assert_eq!(alice_balance, expected_alice);

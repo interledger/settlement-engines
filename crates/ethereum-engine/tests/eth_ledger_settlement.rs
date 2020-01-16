@@ -1,3 +1,4 @@
+#![type_length_limit = "6000000"]
 #![recursion_limit = "128"]
 #![allow(unused_imports)]
 
@@ -6,7 +7,7 @@ use futures::future::join_all;
 use futures::Future;
 use ilp_node::InterledgerNode;
 use interledger::{api::AccountDetails, packet::Address, service::Username};
-use secrecy::{ExposeSecret, SecretBytes, SecretString};
+use secrecy::{ExposeSecret, SecretString};
 use serde_json::{self, json};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -29,8 +30,8 @@ use test_helpers::{redis_helpers::*, start_eth_engine};
 /// transactions, and once the transaction has sufficient confirmations it
 /// lets Bob's connector know about it, so that it adjusts their credit.
 #[cfg(feature = "redis")]
-#[test]
-fn eth_ledger_settlement() {
+#[tokio::test]
+async fn eth_ledger_settlement() {
     // Nodes 1 and 2 are peers, Node 2 is the parent of Node 3
     let _ = env_logger::try_init();
     let context = TestContext::new();
@@ -53,11 +54,6 @@ fn eth_ledger_settlement() {
     let node2_engine = get_open_port(Some(3022));
     let node2_engine_address = SocketAddr::from(([127, 0, 0, 1], node2_engine));
     let bob_key = "cc96601bc52293b53c4736a12af9130abf347669b3813f9ec4cafdf6991b087e".to_string();
-
-    let mut runtime = RuntimeBuilder::new()
-        .panic_handler(|err| std::panic::resume_unwind(err))
-        .build()
-        .unwrap();
 
     let node1: InterledgerNode = serde_json::from_value(json!({
         "ilp_address": "example.alice",
@@ -104,30 +100,21 @@ fn eth_ledger_settlement() {
         "routing_relation": "Child",
     });
 
-    let alice_fut = create_account_on_node(node1_http, alice_on_alice, "admin")
-        .and_then(move |resp| {
-            println!("inserted {:?}", resp);
-            Ok(())
-        })
-        .and_then(move |_| create_account_on_node(node1_http, bob_on_alice, "admin"))
-        .and_then(move |resp| {
-            println!("inserted {:?}", resp);
-            Ok(())
-        });
-
-    let node1_eth_engine_fut = start_eth_engine(
+    start_eth_engine(
         connection_info1,
         node1_engine_address,
         alice_key,
         node1_settlement,
-    );
-
-    runtime.spawn(
-        node1_eth_engine_fut
-            .and_then(move |_| node1.serve())
-            .and_then(move |_| alice_fut)
-            .and_then(move |_| Ok(())),
-    );
+    )
+    .await
+    .unwrap();
+    node1.serve().await.unwrap();
+    create_account_on_node(node1_http, alice_on_alice, "admin")
+        .await
+        .unwrap();
+    create_account_on_node(node1_http, bob_on_alice, "admin")
+        .await
+        .unwrap();
 
     let bob_on_bob = json!({
         "username": "bob",
@@ -153,141 +140,112 @@ fn eth_ledger_settlement() {
         "routing_relation": "Parent",
     });
 
-    let bob_fut = create_account_on_node(node2_http, bob_on_bob, "admin")
-        .and_then(move |_| create_account_on_node(node2_http, alice_on_bob, "admin"));
-
-    let node2_eth_engine_fut = start_eth_engine(
+    start_eth_engine(
         connection_info2,
         node2_engine_address,
         bob_key,
         node2_settlement,
-    );
-
-    runtime.spawn(
-        node2_eth_engine_fut
-            .and_then(move |_| node2.serve())
-            .and_then(move |_| bob_fut)
-            .and_then(move |_| Ok(())),
-    );
-
-    runtime
-        .block_on(
-            // Wait for the nodes to spin up
-            delay(1000)
-                .map_err(|_| panic!("Something strange happened"))
-                .and_then(move |_| {
-                    // Make 4 subsequent payments (we could also do a 71 payment
-                    // directly)
-                    let send1 = send_money_to_username(
-                        node1_http, node2_http, 10, "bob", "alice", "in_alice",
-                    );
-                    let send2 = send_money_to_username(
-                        node1_http, node2_http, 20, "bob", "alice", "in_alice",
-                    );
-                    let send3 = send_money_to_username(
-                        node1_http, node2_http, 39, "bob", "alice", "in_alice",
-                    );
-                    let send4 = send_money_to_username(
-                        node1_http, node2_http, 1, "bob", "alice", "in_alice",
-                    );
-
-                    let get_balances = move || {
-                        join_all(vec![
-                            get_balance("bob", node1_http, "bob_password"),
-                            get_balance("alice", node2_http, "alice_password"),
-                        ])
-                    };
-
-                    send1
-                        .and_then(move |_| get_balances())
-                        .and_then(move |ret| {
-                            assert_eq!(
-                                ret[0],
-                                BalanceData {
-                                    asset_code: "ETH".to_owned(),
-                                    balance: 10e-9
-                                }
-                            );
-                            assert_eq!(
-                                ret[1],
-                                BalanceData {
-                                    asset_code: "ETH".to_owned(),
-                                    balance: -10e-9
-                                }
-                            );
-                            Ok(())
-                        })
-                        .and_then(move |_| send2)
-                        .and_then(move |_| get_balances())
-                        .and_then(move |ret| {
-                            assert_eq!(
-                                ret[0],
-                                BalanceData {
-                                    asset_code: "ETH".to_owned(),
-                                    balance: 30e-9
-                                }
-                            );
-                            assert_eq!(
-                                ret[1],
-                                BalanceData {
-                                    asset_code: "ETH".to_owned(),
-                                    balance: -30e-9
-                                }
-                            );
-                            Ok(())
-                        })
-                        .and_then(move |_| send3)
-                        .and_then(move |_| get_balances())
-                        .and_then(move |ret| {
-                            assert_eq!(
-                                ret[0],
-                                BalanceData {
-                                    asset_code: "ETH".to_owned(),
-                                    balance: 69e-9
-                                }
-                            );
-                            assert_eq!(
-                                ret[1],
-                                BalanceData {
-                                    asset_code: "ETH".to_owned(),
-                                    balance: -69e-9
-                                }
-                            );
-                            Ok(())
-                        })
-                        // Up to here, Alice's balance should be -69 and Bob's
-                        // balance should be 69. Once we make 1 more payment, we
-                        // exceed the settle_threshold and thus a settlement is made
-                        .and_then(move |_| send4)
-                        .and_then(move |_| {
-                            // Wait a few seconds so that the receiver's engine
-                            // gets the data
-                            delay(5000)
-                                .map_err(move |_| panic!("Weird error."))
-                                .and_then(move |_| {
-                                    // Since the credit connection reached -70, and the
-                                    // settle_to is -10, a 60 Wei transaction is made.
-                                    get_balances().and_then(move |ret| {
-                                        assert_eq!(
-                                            ret[0],
-                                            BalanceData {
-                                                asset_code: "ETH".to_owned(),
-                                                balance: 10e-9
-                                            }
-                                        );
-                                        assert_eq!(
-                                            ret[1],
-                                            BalanceData {
-                                                asset_code: "ETH".to_owned(),
-                                                balance: -10e-9
-                                            }
-                                        );
-                                        ganache_pid.kill().unwrap();
-                                        Ok(())
-                                    })
-                                })
-                        })
-                }),
-        )
+    )
+    .await
+    .unwrap();
+    node2.serve().await.unwrap();
+    create_account_on_node(node2_http, bob_on_bob, "admin")
+        .await
         .unwrap();
+    create_account_on_node(node2_http, alice_on_bob, "admin")
+        .await
+        .unwrap();
+
+    // Make 4 subsequent payments (we could also do a 71 payment
+    // directly)
+    let send1 = send_money_to_username(node1_http, node2_http, 10, "bob", "alice", "in_alice");
+    let send2 = send_money_to_username(node1_http, node2_http, 20, "bob", "alice", "in_alice");
+    let send3 = send_money_to_username(node1_http, node2_http, 39, "bob", "alice", "in_alice");
+    let send4 = send_money_to_username(node1_http, node2_http, 1, "bob", "alice", "in_alice");
+
+    let get_balances = move || {
+        join_all(vec![
+            get_balance("bob", node1_http, "bob_password"),
+            get_balance("alice", node2_http, "alice_password"),
+        ])
+    };
+
+    send1.await.unwrap();
+    let ret = get_balances().await;
+    let ret: Vec<_> = ret.into_iter().map(|r| r.unwrap()).collect();
+    assert_eq!(
+        ret[0],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: 10e-9
+        }
+    );
+    assert_eq!(
+        ret[1],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: -10e-9
+        }
+    );
+
+    send2.await.unwrap();
+    let ret = get_balances().await;
+    let ret: Vec<_> = ret.into_iter().map(|r| r.unwrap()).collect();
+    assert_eq!(
+        ret[0],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: 30e-9
+        }
+    );
+    assert_eq!(
+        ret[1],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: -30e-9
+        }
+    );
+    send3.await.unwrap();
+    let ret = get_balances().await;
+    let ret: Vec<_> = ret.into_iter().map(|r| r.unwrap()).collect();
+    assert_eq!(
+        ret[0],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: 69e-9
+        }
+    );
+    assert_eq!(
+        ret[1],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: -69e-9
+        }
+    );
+    // Up to here, Alice's balance should be -69 and Bob's
+    // balance should be 69. Once we make 1 more payment, we
+    // exceed the settle_threshold and thus a settlement is made
+    send4.await.unwrap();
+    // Wait a few seconds so that the receiver's engine
+    // gets the data
+    delay(5000).await;
+    let ret = get_balances().await;
+    let ret: Vec<_> = ret.into_iter().map(|r| r.unwrap()).collect();
+    // Since the credit connection reached -70, and the
+    // settle_to is -10, a 60 Wei transaction is made.
+    assert_eq!(
+        ret[0],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: 10e-9
+        }
+    );
+    assert_eq!(
+        ret[1],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: -10e-9
+        }
+    );
+    ganache_pid.kill().unwrap();
 }

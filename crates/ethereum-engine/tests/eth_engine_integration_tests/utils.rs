@@ -1,32 +1,28 @@
+use async_trait::async_trait;
 use bytes::Bytes;
-use tokio::runtime::Runtime;
+use std::cmp::Ordering;
+use std::process::Command;
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use hyper::StatusCode;
-use std::process::Command;
 use std::str::FromStr;
-use std::thread::sleep;
-use std::time::Duration;
 
-use web3::{
-    futures::future::{err, ok, Future},
-    types::{Address, H256, U256},
+use web3::types::{Address, H256, U256};
+
+use ilp_settlement_ethereum::engine::{
+    EthereumLedgerSettlementEngine, EthereumLedgerSettlementEngineBuilder,
 };
-
-use ilp_settlement_ethereum::{
-    engine::{EthereumLedgerSettlementEngine, EthereumLedgerSettlementEngineBuilder},
-    utils::types::{Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore},
+use ilp_settlement_ethereum::utils::types::{
+    Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore,
 };
 use interledger_settlement::core::{
     idempotency::{IdempotentData, IdempotentStore},
     scale_with_precision_loss,
     types::{Convert, ConvertDetails, LeftoversStore},
 };
-
-use num_bigint::BigUint;
 
 #[derive(Debug, Clone)]
 pub struct TestAccount {
@@ -69,60 +65,67 @@ pub struct TestStore {
     pub uncredited_settlement_amount: Arc<RwLock<HashMap<String, (BigUint, u8)>>>,
 }
 
+use num_bigint::BigUint;
+
+#[async_trait]
 impl LeftoversStore for TestStore {
     type AccountId = String;
     type AssetType = BigUint;
 
-    fn save_uncredited_settlement_amount(
+    async fn save_uncredited_settlement_amount(
         &self,
         account_id: Self::AccountId,
         uncredited_settlement_amount: (Self::AssetType, u8),
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+    ) -> Result<(), ()> {
         let mut guard = self.uncredited_settlement_amount.write();
         if let Some(leftovers) = (*guard).get_mut(&account_id) {
-            if leftovers.1 > uncredited_settlement_amount.1 {
-                // the current leftovers maintain the scale so we just need to
-                // upscale the provided leftovers to the existing leftovers' scale
-                let scaled = uncredited_settlement_amount
-                    .0
-                    .normalize_scale(ConvertDetails {
-                        from: uncredited_settlement_amount.1,
-                        to: leftovers.1,
-                    })
-                    .unwrap();
-                *leftovers = (leftovers.0.clone() + scaled, leftovers.1);
-            } else if leftovers.1 == uncredited_settlement_amount.1 {
-                *leftovers = (
-                    leftovers.0.clone() + uncredited_settlement_amount.0,
-                    leftovers.1,
-                );
-            } else {
-                // if the scale of the provided leftovers is bigger than
-                // existing scale then we update the scale of the leftovers'
-                // scale
-                let scaled = leftovers
-                    .0
-                    .normalize_scale(ConvertDetails {
-                        from: leftovers.1,
-                        to: uncredited_settlement_amount.1,
-                    })
-                    .unwrap();
-                *leftovers = (
-                    uncredited_settlement_amount.0 + scaled,
-                    uncredited_settlement_amount.1,
-                );
+            match leftovers.1.cmp(&uncredited_settlement_amount.1) {
+                Ordering::Greater => {
+                    // the current leftovers maintain the scale so we just need to
+                    // upscale the provided leftovers to the existing leftovers' scale
+                    let scaled = uncredited_settlement_amount
+                        .0
+                        .normalize_scale(ConvertDetails {
+                            from: uncredited_settlement_amount.1,
+                            to: leftovers.1,
+                        })
+                        .unwrap();
+                    *leftovers = (leftovers.0.clone() + scaled, leftovers.1);
+                }
+                Ordering::Equal => {
+                    *leftovers = (
+                        leftovers.0.clone() + uncredited_settlement_amount.0,
+                        leftovers.1,
+                    );
+                }
+                _ => {
+                    // if the scale of the provided leftovers is bigger than
+                    // existing scale then we update the scale of the leftovers'
+                    // scale
+                    let scaled = leftovers
+                        .0
+                        .normalize_scale(ConvertDetails {
+                            from: leftovers.1,
+                            to: uncredited_settlement_amount.1,
+                        })
+                        .unwrap();
+                    *leftovers = (
+                        uncredited_settlement_amount.0 + scaled,
+                        uncredited_settlement_amount.1,
+                    );
+                }
             }
         } else {
             (*guard).insert(account_id, uncredited_settlement_amount);
         }
-        Box::new(ok(()))
+        Ok(())
     }
 
-    fn load_uncredited_settlement_amount(
+    async fn load_uncredited_settlement_amount(
         &self,
         account_id: Self::AccountId,
         local_scale: u8,
-    ) -> Box<dyn Future<Item = Self::AssetType, Error = ()> + Send> {
+    ) -> Result<Self::AssetType, ()> {
         let mut guard = self.uncredited_settlement_amount.write();
         if let Some(l) = guard.get_mut(&account_id) {
             let ret = l.clone();
@@ -130,59 +133,51 @@ impl LeftoversStore for TestStore {
                 scale_with_precision_loss(ret.0, local_scale, ret.1);
             // save the new leftovers
             *l = (leftover_precision_loss, std::cmp::max(local_scale, ret.1));
-            Box::new(ok(scaled_leftover_amount))
+            Ok(scaled_leftover_amount)
         } else {
-            Box::new(ok(BigUint::from(0u32)))
+            Ok(BigUint::from(0u32))
         }
     }
 
-    fn get_uncredited_settlement_amount(
+    async fn get_uncredited_settlement_amount(
         &self,
         account_id: Self::AccountId,
-    ) -> Box<dyn Future<Item = (Self::AssetType, u8), Error = ()> + Send> {
+    ) -> Result<(Self::AssetType, u8), ()> {
         let leftovers = self.uncredited_settlement_amount.read();
-        Box::new(ok(if let Some(a) = leftovers.get(&account_id) {
+        Ok(if let Some(a) = leftovers.get(&account_id) {
             a.clone()
         } else {
             (BigUint::from(0u32), 1)
-        }))
+        })
     }
 
-    fn clear_uncredited_settlement_amount(
+    async fn clear_uncredited_settlement_amount(
         &self,
         _account_id: Self::AccountId,
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+    ) -> Result<(), ()> {
         unreachable!()
     }
 }
 
+#[async_trait]
 impl EthereumStore for TestStore {
     type Account = TestAccount;
 
-    fn save_account_addresses(
-        &self,
-        data: HashMap<String, Addresses>,
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+    async fn save_account_addresses(&self, data: HashMap<String, Addresses>) -> Result<(), ()> {
         let mut guard = self.addresses.write();
         let mut guard2 = self.address_to_id.write();
         for (acc, d) in data {
             (*guard).insert(acc.clone(), d);
             (*guard2).insert(d, acc);
         }
-        Box::new(ok(()))
+        Ok(())
     }
 
-    fn delete_accounts(
-        &self,
-        _account_ids: Vec<String>,
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
-        Box::new(ok(()))
+    async fn delete_accounts(&self, _account_ids: Vec<String>) -> Result<(), ()> {
+        Ok(())
     }
 
-    fn load_account_addresses(
-        &self,
-        account_ids: Vec<String>,
-    ) -> Box<dyn Future<Item = Vec<Addresses>, Error = ()> + Send> {
+    async fn load_account_addresses(&self, account_ids: Vec<String>) -> Result<Vec<Addresses>, ()> {
         let mut v = Vec::with_capacity(account_ids.len());
         let addresses = self.addresses.read();
         for acc in &account_ids {
@@ -193,91 +188,84 @@ impl EthereumStore for TestStore {
                 });
             } else {
                 // if the account is not found, error out
-                return Box::new(err(()));
+                return Err(());
             }
         }
-        Box::new(ok(v))
+        Ok(v)
     }
 
-    fn save_recently_observed_block(
+    async fn save_recently_observed_block(
         &self,
         _net_version: String,
         block: U256,
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+    ) -> Result<(), ()> {
         let mut guard = self.last_observed_block.write();
         *guard = block;
-        Box::new(ok(()))
+        Ok(())
     }
 
-    fn load_recently_observed_block(
-        &self,
-        _net_version: String,
-    ) -> Box<dyn Future<Item = Option<U256>, Error = ()> + Send> {
-        Box::new(Some(ok(*self.last_observed_block.read())))
+    async fn load_recently_observed_block(&self, _net_version: String) -> Result<Option<U256>, ()> {
+        let b = *self.last_observed_block.read();
+        Ok(Some(b))
     }
 
-    fn load_account_id_from_address(
-        &self,
-        eth_address: Addresses,
-    ) -> Box<dyn Future<Item = String, Error = ()> + Send> {
+    async fn load_account_id_from_address(&self, eth_address: Addresses) -> Result<String, ()> {
         let addresses = self.address_to_id.read();
         let d = if let Some(d) = addresses.get(&eth_address) {
             d.clone()
         } else {
-            return Box::new(err(()));
+            return Err(());
         };
 
-        Box::new(ok(d))
+        Ok(d)
     }
 
-    fn check_if_tx_processed(
-        &self,
-        tx_hash: H256,
-    ) -> Box<dyn Future<Item = bool, Error = ()> + Send> {
+    async fn check_if_tx_processed(&self, tx_hash: H256) -> Result<bool, ()> {
         let hashes = self.saved_hashes.read();
         // if hash exists then return error
         if hashes.get(&tx_hash).is_some() {
-            Box::new(ok(true))
+            Ok(true)
         } else {
-            Box::new(ok(false))
+            Ok(false)
         }
     }
 
-    fn mark_tx_processed(&self, tx_hash: H256) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+    async fn mark_tx_processed(&self, tx_hash: H256) -> Result<(), ()> {
         let mut hashes = self.saved_hashes.write();
         (*hashes).insert(tx_hash, true);
-        Box::new(ok(()))
+        Ok(())
     }
 }
 
+#[async_trait]
 impl IdempotentStore for TestStore {
-    fn load_idempotent_data(
+    async fn load_idempotent_data(
         &self,
         idempotency_key: String,
-    ) -> Box<dyn Future<Item = Option<IdempotentData>, Error = ()> + Send> {
+    ) -> Result<Option<IdempotentData>, ()> {
         let cache = self.cache.read();
         if let Some(data) = cache.get(&idempotency_key) {
             let mut guard = self.cache_hits.write();
             *guard += 1; // used to test how many times this branch gets executed
-            Box::new(ok(Some(data.clone())))
+            Ok(Some(data.clone()))
         } else {
-            Box::new(ok(None))
+            Ok(None)
         }
     }
 
-    fn save_idempotent_data(
+    async fn save_idempotent_data(
         &self,
         idempotency_key: String,
         input_hash: [u8; 32],
         status_code: StatusCode,
         data: Bytes,
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+    ) -> Result<(), ()> {
         let mut cache = self.cache.write();
         cache.insert(
             idempotency_key,
             IdempotentData::new(status_code, data, input_hash),
         );
-        Box::new(ok(()))
+        Ok(())
     }
 }
 
@@ -320,7 +308,7 @@ impl TestStore {
 impl TestAccount {
     pub fn new(id: String, address: &str, token_address: &str) -> Self {
         Self {
-            id: id.to_string(),
+            id,
             address: Address::from_str(address).unwrap(),
             token_address: Address::from_str(token_address).unwrap(),
             no_details: false,
@@ -328,8 +316,8 @@ impl TestAccount {
     }
 }
 
-// Helper to create a new engine and spin a new ganache instance.
-pub fn test_engine<Si, S, A>(
+// Helper to create a new engine
+pub async fn test_engine<Si, S, A>(
     store: S,
     key: Si,
     confs: u8,
@@ -357,8 +345,18 @@ where
         .watch_incoming(watch_incoming)
         .poll_frequency(1000)
         .connect()
-        .wait()
-        .unwrap()
+        .await
+}
+
+pub fn test_store(
+    account: TestAccount,
+    store_fails: bool,
+    account_has_engine: bool,
+    initialize: bool,
+) -> TestStore {
+    let mut acc = account;
+    acc.no_details = !account_has_engine;
+    TestStore::new(vec![acc], store_fails, initialize)
 }
 
 pub fn start_ganache(port: u16) -> std::process::Child {
@@ -369,29 +367,7 @@ pub fn start_ganache(port: u16) -> std::process::Child {
         .arg("-p").arg(port.to_string());
     let ganache_pid = ganache.spawn().expect("couldnt start ganache-cli");
     // wait a couple of seconds for ganache to boot up
-    sleep(Duration::from_secs(5));
+    let sleep_time = std::time::Duration::from_secs(5);
+    std::thread::sleep(sleep_time);
     ganache_pid
-}
-
-pub fn test_store(
-    account: TestAccount,
-    store_fails: bool,
-    account_has_engine: bool,
-    initialize: bool,
-) -> TestStore {
-    let mut acc = account.clone();
-    acc.no_details = !account_has_engine;
-    TestStore::new(vec![acc], store_fails, initialize)
-}
-
-// Futures helper taken from the store_helpers in interledger-store-redis.
-pub fn block_on<F>(f: F) -> Result<F::Item, F::Error>
-where
-    F: Future + Send + 'static,
-    F::Item: Send,
-    F::Error: Send,
-{
-    let _ = env_logger::try_init();
-    let mut runtime = Runtime::new().unwrap();
-    runtime.block_on(f)
 }
