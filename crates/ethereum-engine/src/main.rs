@@ -2,7 +2,6 @@ use clap::Arg;
 use clap::{crate_version, App, ArgMatches};
 use config::Value;
 use config::{Config, FileFormat, Source};
-use futures::Future;
 use libc::{c_int, isatty};
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -11,7 +10,8 @@ use std::vec::Vec;
 #[cfg(feature = "redis")]
 use ilp_settlement_ethereum::engine::redis_bin::{run_ethereum_engine, EthereumLedgerOpt};
 
-pub fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::init();
 
     // The naming convention of arguments
@@ -111,10 +111,10 @@ pub fn main() {
     merge_args(&mut config, &matches);
     // TODO: Abstract this over the backend being used.
     #[cfg(feature = "redis")]
-    tokio_run(run_ethereum_engine(
-        config.try_into::<EthereumLedgerOpt>().unwrap(),
-    ));
-    unreachable!();
+    run_ethereum_engine(config.try_into::<EthereumLedgerOpt>().unwrap())
+        .await
+        .unwrap();
+    futures::future::pending().await
 }
 
 // returns (subcommand paths, config path)
@@ -256,17 +256,4 @@ fn is_fd_tty(file_descriptor: c_int) -> bool {
         result = isatty(file_descriptor);
     }
     result == 1
-}
-
-#[doc(hidden)]
-pub fn tokio_run(fut: impl Future<Item = (), Error = ()> + Send + 'static) {
-    let mut runtime = tokio::runtime::Builder::new()
-        // Don't swallow panics
-        .panic_handler(|err| std::panic::resume_unwind(err))
-        .name_prefix("interledger-rs-worker-")
-        .build()
-        .expect("failed to start new runtime");
-
-    runtime.spawn(fut);
-    runtime.shutdown_on_idle().wait().unwrap();
 }
