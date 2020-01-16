@@ -1,3 +1,4 @@
+#![type_length_limit = "6000000"]
 #![recursion_limit = "128"]
 #![allow(unused_imports)]
 
@@ -21,8 +22,8 @@ use test_helpers::{
 use test_helpers::{redis_helpers::*, start_eth_engine};
 
 #[cfg(feature = "redis")]
-#[test]
-fn eth_xrp_interoperable() {
+#[tokio::test]
+async fn eth_xrp_interoperable() {
     // Nodes 1 and 2 are peers, Node 2 is the parent of Node 3
     let _ = env_logger::try_init();
     let context = TestContext::new();
@@ -74,23 +75,23 @@ fn eth_xrp_interoperable() {
         "380eb0f3d505f087e438eca80bc4df9a7faa24f868e69fc0440261a0fc0567dc".to_string();
     let node2_eth_key =
         "cc96601bc52293b53c4736a12af9130abf347669b3813f9ec4cafdf6991b087e".to_string();
-    let node1_eth_engine_fut = start_eth_engine(
+
+    start_eth_engine(
         connection_info1.clone(),
         node1_engine_address,
         node1_eth_key,
         node1_settlement,
-    );
-    let node2_eth_engine_fut = start_eth_engine(
+    )
+    .await
+    .unwrap();
+    start_eth_engine(
         connection_info2.clone(),
         node2_engine_address,
         node2_eth_key,
         node2_settlement,
-    );
-
-    let mut runtime = RuntimeBuilder::new()
-        .panic_handler(|err| std::panic::resume_unwind(err))
-        .build()
-        .unwrap();
+    )
+    .await
+    .unwrap();
 
     let node1: InterledgerNode = serde_json::from_value(json!({
         "ilp_address": "example.alice",
@@ -126,15 +127,13 @@ fn eth_xrp_interoperable() {
         "routing_relation": "Peer",
     });
 
-    let alice_fut = create_account_on_node(node1_http, alice_on_alice, "admin")
-        .and_then(move |_| create_account_on_node(node1_http, bob_on_alice, "admin"));
-
-    runtime.spawn(
-        node1_eth_engine_fut
-            .and_then(move |_| node1.serve())
-            .and_then(move |_| alice_fut)
-            .and_then(move |_| Ok(())),
-    );
+    node1.serve().await.unwrap();
+    create_account_on_node(node1_http, alice_on_alice, "admin")
+        .await
+        .unwrap();
+    create_account_on_node(node1_http, bob_on_alice, "admin")
+        .await
+        .unwrap();
 
     let node2: InterledgerNode = serde_json::from_value(json!({
         "ilp_address": "example.bob",
@@ -177,20 +176,18 @@ fn eth_xrp_interoperable() {
         "routing_relation": "Child",
     });
 
-    let bob_fut = create_account_on_node(node2_http, alice_on_bob, "admin")
-        .join(create_account_on_node(node2_http, charlie_on_bob, "admin"))
-        // Setting the settlement engines after the accounts are created should
-        // still trigger the call to create their accounts on the settlement engines
-        .and_then(move |_| {
-            set_node_settlement_engines(node2_http, bob_settlement_engines, "admin")
-        });
-
-    runtime.spawn(
-        node2_eth_engine_fut
-            .and_then(move |_| node2.serve())
-            .and_then(move |_| bob_fut)
-            .and_then(move |_| Ok(())),
-    );
+    node2.serve().await.unwrap();
+    create_account_on_node(node2_http, alice_on_bob, "admin")
+        .await
+        .unwrap();
+    create_account_on_node(node2_http, charlie_on_bob, "admin")
+        .await
+        .unwrap();
+    // Setting the settlement engines after the accounts are created should
+    // still trigger the call to create their accounts on the settlement engines
+    set_node_settlement_engines(node2_http, bob_settlement_engines, "admin")
+        .await
+        .unwrap();
 
     let charlie_on_charlie = json!({
         "username": "charlie",
@@ -212,9 +209,6 @@ fn eth_xrp_interoperable() {
         "settlement_engine_url": format!("http://localhost:{}", node3_xrp_engine_port),
     });
 
-    let charlie_fut = create_account_on_node(node3_http, bob_on_charlie, "admin")
-        .and_then(move |_| create_account_on_node(node3_http, charlie_on_charlie, "admin"));
-
     let node3: InterledgerNode = serde_json::from_value(json!({
         "admin_auth_token": "admin",
         "database_url": connection_info_to_string(connection_info3),
@@ -225,122 +219,117 @@ fn eth_xrp_interoperable() {
     }))
     .unwrap();
 
-    runtime
-        .block_on(
-            delay(1000)
-                .map_err(|err| panic!(err))
-                .and_then(move |_| node3.serve())
-                .and_then(move |_| charlie_fut)
-                .and_then(move |_| {
-                    let client = reqwest::r#async::Client::new();
-                    client
-                        .put(&format!("http://localhost:{}/rates", node2_http))
-                        .header("Authorization", "Bearer admin")
-                        // 1 XRP = $1, 1 ETH = $1000
-                        .json(&json!({"XRP": 1, "ETH": 1000}))
-                        .send()
-                        .map_err(|err| panic!(err))
-                        .and_then(|res| {
-                            res.error_for_status()
-                                .expect("Error setting exchange rates");
-                            Ok(())
-                        })
-                })
-                .and_then(move |_| {
-                    send_money_to_username(
-                        node1_http, node3_http, 69000, "charlie", "alice", "in_alice",
-                    )
-                    // Pay 1k Gwei --> 1 drop
-                    // This will trigger a 60 Gwei settlement from Alice to Bob.
-                    .and_then(move |_| {
-                        send_money_to_username(
-                            node1_http, node3_http, 1000, "charlie", "alice", "in_alice",
-                        )
-                    })
-                    .and_then(move |_|
-                        // wait for the settlements
-                        delay(10000).map_err(|err| panic!(err)).and_then(move |_|
-                            futures::future::join_all(vec![
-                                get_balance("alice", node1_http, "in_alice"),
-                                get_balance("bob", node1_http, "bob_password"),
-                                get_balance("alice", node2_http, "alice_password"),
-                                get_balance("charlie", node2_http, "charlie_password"),
-                                get_balance("charlie", node3_http, "in_charlie"),
-                                get_balance("bob", node3_http, "bob_password"),
-                            ])
-                            .and_then(move |balances| {
-                                    assert_eq!(
-                                        balances[0],
-                                        BalanceData {
-                                            asset_code: "ETH".to_owned(),
-                                            balance: -70000e-9
-                                        }
-                                    );
-                                    // Since Alice has configured Bob's
-                                    // `settle_threshold` and `settle_to` to be
-                                    // 70k and 10k respectively, once she
-                                    // exceeded the 70k threshold, she made a 60k
-                                    // Gwei settlement to Bob so that their debt
-                                    // settles down to 10k.
-                                    // From her perspective, Bob's account has a
-                                    // positive 10k balance since she owes him money.
-                                    assert_eq!(
-                                        balances[1],
-                                        BalanceData {
-                                            asset_code: "ETH".to_owned(),
-                                            balance: 10000e-9
-                                        }
-                                    );
-                                    // From Bob's perspective, Alice's account
-                                    // has a negative sign since he is owed money.
-                                    assert_eq!(
-                                        balances[2],
-                                        BalanceData {
-                                            asset_code: "ETH".to_owned(),
-                                            balance: -10000e-9
-                                        }
-                                    );
-                                    // As Bob forwards money to Charlie, he also
-                                    // eventually exceeds the `settle_threshold`
-                                    // which incidentally is set to 70k. As a
-                                    // result, he must make a XRP ledger
-                                    // settlement of 65k Drops to get his debt
-                                    // back to the `settle_to` value of charlie,
-                                    // which is 5k (70k - 5k = 65k).
-                                    assert_eq!(
-                                        balances[3],
-                                        BalanceData {
-                                            asset_code: "XRP".to_owned(),
-                                            balance: 5000e-6
-                                        }
-                                    );
-                                    // Charlie's balance indicates that he's
-                                    // received 70k drops (the total amount Alice sent him)
-                                    assert_eq!(
-                                        balances[4],
-                                        BalanceData {
-                                            asset_code: "XRP".to_owned(),
-                                            balance: 70000e-6
-                                        }
-                                    );
-                                    // And he sees is owed 5k by Bob.
-                                    assert_eq!(
-                                        balances[5],
-                                        BalanceData {
-                                            asset_code: "XRP".to_owned(),
-                                            balance: -5000e-6
-                                        }
-                                    );
-
-                                    node2_engine_redis.kill().unwrap();
-                                    node3_engine_redis.kill().unwrap();
-                                    node2_xrp_engine.kill().unwrap();
-                                    node3_xrp_engine.kill().unwrap();
-                                    ganache_pid.kill().unwrap();
-                                    Ok(())
-                                })
-                            ))
-                }),
-        )
+    node3.serve().await.unwrap();
+    create_account_on_node(node3_http, bob_on_charlie, "admin")
+        .await
         .unwrap();
+    create_account_on_node(node3_http, charlie_on_charlie, "admin")
+        .await
+        .unwrap();
+
+    // Set the exchange rates
+    let client = reqwest::Client::new();
+    client
+        .put(&format!("http://localhost:{}/rates", node2_http))
+        .header("Authorization", "Bearer admin")
+        // 1 XRP = $1, 1 ETH = $1000
+        .json(&json!({"XRP": 1, "ETH": 1000}))
+        .send()
+        .await
+        .unwrap();
+
+    send_money_to_username(
+        node1_http, node3_http, 69000, "charlie", "alice", "in_alice",
+    )
+    .await
+    .unwrap();
+    // Pay 1k Gwei --> 1 drop
+    // This will trigger a 60 Gwei settlement from Alice to Bob.
+    send_money_to_username(node1_http, node3_http, 1000, "charlie", "alice", "in_alice")
+        .await
+        .unwrap();
+
+    // wait for the settlements
+    delay(10000).await;
+
+    // Get the balances
+    let balances = futures::future::join_all(vec![
+        get_balance("alice", node1_http, "in_alice"),
+        get_balance("bob", node1_http, "bob_password"),
+        get_balance("alice", node2_http, "alice_password"),
+        get_balance("charlie", node2_http, "charlie_password"),
+        get_balance("charlie", node3_http, "in_charlie"),
+        get_balance("bob", node3_http, "bob_password"),
+    ])
+    .await;
+    let balances: Vec<_> = balances.into_iter().map(|b| b.unwrap()).collect();
+
+    assert_eq!(
+        balances[0],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: -70000e-9
+        }
+    );
+    // Since Alice has configured Bob's
+    // `settle_threshold` and `settle_to` to be
+    // 70k and 10k respectively, once she
+    // exceeded the 70k threshold, she made a 60k
+    // Gwei settlement to Bob so that their debt
+    // settles down to 10k.
+    // From her perspective, Bob's account has a
+    // positive 10k balance since she owes him money.
+    assert_eq!(
+        balances[1],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: 10000e-9
+        }
+    );
+    // From Bob's perspective, Alice's account
+    // has a negative sign since he is owed money.
+    assert_eq!(
+        balances[2],
+        BalanceData {
+            asset_code: "ETH".to_owned(),
+            balance: -10000e-9
+        }
+    );
+    // As Bob forwards money to Charlie, he also
+    // eventually exceeds the `settle_threshold`
+    // which incidentally is set to 70k. As a
+    // result, he must make a XRP ledger
+    // settlement of 65k Drops to get his debt
+    // back to the `settle_to` value of charlie,
+    // which is 5k (70k - 5k = 65k).
+    assert_eq!(
+        balances[3],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: 5000e-6
+        }
+    );
+    // Charlie's balance indicates that he's
+    // received 70k drops (the total amount Alice sent him)
+    assert_eq!(
+        balances[4],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: 70000e-6
+        }
+    );
+    // And he sees is owed 5k by Bob.
+    assert_eq!(
+        balances[5],
+        BalanceData {
+            asset_code: "XRP".to_owned(),
+            balance: -5000e-6
+        }
+    );
+
+    node2_engine_redis.kill().unwrap();
+    node3_engine_redis.kill().unwrap();
+    node2_xrp_engine.kill().unwrap();
+    node3_xrp_engine.kill().unwrap();
+    ganache_pid.kill().unwrap();
 }
