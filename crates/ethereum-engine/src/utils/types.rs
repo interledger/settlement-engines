@@ -1,19 +1,18 @@
 use super::RawTransaction;
+use async_trait::async_trait;
 use clarity::{PrivateKey, Signature};
-use futures::Future;
+use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256 as Sha3};
 use std::collections::HashMap;
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
 use std::str::FromStr;
 use web3::types::{Address, H256, U256};
 
-use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Display};
 /// An Ethereum account is associated with an address. We additionally require
 /// that an optional `token_address` is implemented. If the `token_address` of an
 /// Ethereum Account is not `None`, than that account is used with the ERC20 token
 /// associated with that `token_address`.
-///
-use std::hash::Hash;
 pub trait EthereumAccount {
     type AccountId: Eq
         + Hash
@@ -44,61 +43,56 @@ pub struct Addresses {
 /// Trait used to store Ethereum account addresses, as well as any data related
 /// to the connector notifier service such as the most recently observed block
 /// and account balance
+#[async_trait]
 pub trait EthereumStore {
     type Account: EthereumAccount;
 
     /// Saves the Ethereum address associated with this account
     /// called when creating an account on the API.
-    fn save_account_addresses(
+    async fn save_account_addresses(
         &self,
         data: HashMap<<Self::Account as EthereumAccount>::AccountId, Addresses>,
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send>;
+    ) -> Result<(), ()>;
 
     /// Loads the Ethereum address associated with this account
-    fn load_account_addresses(
+    async fn load_account_addresses(
         &self,
         account_ids: Vec<<Self::Account as EthereumAccount>::AccountId>,
-    ) -> Box<dyn Future<Item = Vec<Addresses>, Error = ()> + Send>;
+    ) -> Result<Vec<Addresses>, ()>;
 
     /// Deletes the Ethereum address associated with this account
     /// called when deleting an account on the API.
-    fn delete_accounts(
+    async fn delete_accounts(
         &self,
         account_ids: Vec<<Self::Account as EthereumAccount>::AccountId>,
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send>;
+    ) -> Result<(), ()>;
 
     /// Saves the latest block number, up to which all
     /// transactions have been communicated to the connector
-    fn save_recently_observed_block(
+    async fn save_recently_observed_block(
         &self,
         net_version: String,
         block: U256,
-    ) -> Box<dyn Future<Item = (), Error = ()> + Send>;
+    ) -> Result<(), ()>;
 
     /// Loads the latest saved block number
-    fn load_recently_observed_block(
-        &self,
-        net_version: String,
-    ) -> Box<dyn Future<Item = Option<U256>, Error = ()> + Send>;
+    async fn load_recently_observed_block(&self, net_version: String) -> Result<Option<U256>, ()>;
 
     /// Retrieves the account id associated with the provided addresses pair.
     /// Note that an account with the same `own_address` but different ERC20
     /// `token_address` can exist multiple times since each occurence represents
     /// a different token.
-    fn load_account_id_from_address(
+    async fn load_account_id_from_address(
         &self,
         eth_address: Addresses,
-    ) -> Box<dyn Future<Item = <Self::Account as EthereumAccount>::AccountId, Error = ()> + Send>;
+    ) -> Result<<Self::Account as EthereumAccount>::AccountId, ()>;
 
     /// Returns true if the transaction has already been processed and saved in
     /// the store.
-    fn check_if_tx_processed(
-        &self,
-        tx_hash: H256,
-    ) -> Box<dyn Future<Item = bool, Error = ()> + Send>;
+    async fn check_if_tx_processed(&self, tx_hash: H256) -> Result<bool, ()>;
 
     /// Saves the transaction hash in the store.
-    fn mark_tx_processed(&self, tx_hash: H256) -> Box<dyn Future<Item = (), Error = ()> + Send>;
+    async fn mark_tx_processed(&self, tx_hash: H256) -> Result<(), ()>;
 }
 
 /// Implement this trait for datatypes which can be used to sign an Ethereum

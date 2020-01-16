@@ -1,11 +1,12 @@
 use super::RawTransaction;
 use ethabi::Token;
+use futures::compat::Future01CompatExt;
+use futures::TryFutureExt;
 use lazy_static::lazy_static;
 use log::error;
 use std::str::FromStr;
 use web3::{
     api::Web3,
-    futures::future::Future,
     transports::Http,
     types::{Address, BlockNumber, FilterBuilder, Transaction, H160, H256, U256},
 };
@@ -68,14 +69,14 @@ pub struct ERC20Transfer {
 
 /// Filters out transactions where the `from` and `to` fields match the provides
 /// addreses.
-pub fn filter_transfer_logs(
+pub async fn filter_transfer_logs(
     web3: Web3<Http>,
     contract_address: Address,
     from: Option<Address>,
     to: Option<Address>,
     from_block: BlockNumber,
     to_block: BlockNumber,
-) -> impl Future<Item = Vec<ERC20Transfer>, Error = ()> {
+) -> Result<Vec<ERC20Transfer>, ()> {
     let from = if let Some(from) = from {
         Some(vec![H256::from(from)])
     } else {
@@ -105,28 +106,31 @@ pub fn filter_transfer_logs(
         .build();
 
     // Make an eth_getLogs call to the Ethereum node
-    web3.eth()
+    let logs = web3
+        .eth()
         .logs(filter)
+        .compat()
         .map_err(move |err| error!("Got error when fetching transfer logs{:?}", err))
-        .and_then(move |logs| {
-            let mut ret = Vec::new();
-            for log in logs {
-                // NOTE: From/to are indexed events.
-                // Amount is parsed directly from the data field.
-                let indexed = log.topics;
-                let from = H160::from(indexed[1]);
-                let to = H160::from(indexed[2]);
-                let data = log.data;
-                let amount = U256::from_str(&hex::encode(data.0)).unwrap();
-                ret.push(ERC20Transfer {
-                    tx_hash: log.transaction_hash.unwrap(),
-                    from,
-                    to,
-                    amount,
-                });
-            }
-            Ok(ret)
-        })
+        .await?;
+
+    let mut ret = Vec::new();
+    for log in logs {
+        // NOTE: From/to are indexed events.
+        // Amount is parsed directly from the data field.
+        let indexed = log.topics;
+        let from = H160::from(indexed[1]);
+        let to = H160::from(indexed[2]);
+        let data = log.data;
+        let amount = U256::from_str(&hex::encode(data.0)).unwrap();
+        ret.push(ERC20Transfer {
+            tx_hash: log.transaction_hash.unwrap(),
+            from,
+            to,
+            amount,
+        });
+    }
+
+    Ok(ret)
 }
 
 // TODO : Extend this function to inspect the data field of a
