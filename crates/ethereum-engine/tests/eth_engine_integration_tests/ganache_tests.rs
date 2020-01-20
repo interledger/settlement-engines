@@ -275,7 +275,7 @@ async fn test_send_eth() {
         (BigUint::from(1u32), 20)
     );
 
-    std::thread::sleep(Duration::from_millis(2000)); // wait a few seconds so that the receiver's engine that does the polling
+    tokio::time::delay_for(Duration::from_secs(2)).await;
 
     let (eloop, transport) = Http::new("http://localhost:8545").unwrap();
     eloop.into_remote();
