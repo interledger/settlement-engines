@@ -18,6 +18,7 @@ use ilp_settlement_ethereum::engine::{
 use ilp_settlement_ethereum::utils::types::{
     Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore,
 };
+use interledger_errors::{IdempotentStoreError, LeftoversStoreError};
 use interledger_settlement::core::{
     idempotency::{IdempotentData, IdempotentStore},
     scale_with_precision_loss,
@@ -76,7 +77,7 @@ impl LeftoversStore for TestStore {
         &self,
         account_id: Self::AccountId,
         uncredited_settlement_amount: (Self::AssetType, u8),
-    ) -> Result<(), ()> {
+    ) -> Result<(), LeftoversStoreError> {
         let mut guard = self.uncredited_settlement_amount.write();
         if let Some(leftovers) = (*guard).get_mut(&account_id) {
             match leftovers.1.cmp(&uncredited_settlement_amount.1) {
@@ -125,7 +126,7 @@ impl LeftoversStore for TestStore {
         &self,
         account_id: Self::AccountId,
         local_scale: u8,
-    ) -> Result<Self::AssetType, ()> {
+    ) -> Result<Self::AssetType, LeftoversStoreError> {
         let mut guard = self.uncredited_settlement_amount.write();
         if let Some(l) = guard.get_mut(&account_id) {
             let ret = l.clone();
@@ -142,7 +143,7 @@ impl LeftoversStore for TestStore {
     async fn get_uncredited_settlement_amount(
         &self,
         account_id: Self::AccountId,
-    ) -> Result<(Self::AssetType, u8), ()> {
+    ) -> Result<(Self::AssetType, u8), LeftoversStoreError> {
         let leftovers = self.uncredited_settlement_amount.read();
         Ok(if let Some(a) = leftovers.get(&account_id) {
             a.clone()
@@ -154,7 +155,7 @@ impl LeftoversStore for TestStore {
     async fn clear_uncredited_settlement_amount(
         &self,
         _account_id: Self::AccountId,
-    ) -> Result<(), ()> {
+    ) -> Result<(), LeftoversStoreError> {
         unreachable!()
     }
 }
@@ -242,7 +243,7 @@ impl IdempotentStore for TestStore {
     async fn load_idempotent_data(
         &self,
         idempotency_key: String,
-    ) -> Result<Option<IdempotentData>, ()> {
+    ) -> Result<Option<IdempotentData>, IdempotentStoreError> {
         let cache = self.cache.read();
         if let Some(data) = cache.get(&idempotency_key) {
             let mut guard = self.cache_hits.write();
@@ -259,7 +260,7 @@ impl IdempotentStore for TestStore {
         input_hash: [u8; 32],
         status_code: StatusCode,
         data: Bytes,
-    ) -> Result<(), ()> {
+    ) -> Result<(), IdempotentStoreError> {
         let mut cache = self.cache.write();
         cache.insert(
             idempotency_key,
