@@ -33,7 +33,7 @@ use web3::{
     types::{Address, BlockNumber, CallRequest, H256, U256},
 };
 
-use interledger_http::error::*;
+use interledger_errors::*;
 use interledger_settlement::core::{
     engines_api::create_settlement_engine_filter,
     scale_with_precision_loss,

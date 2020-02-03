@@ -19,6 +19,8 @@ use interledger_settlement::core::{
     types::LeftoversStore,
 };
 
+use interledger_errors::{IdempotentStoreError, LeftoversStoreError};
+
 // Key for the latest observed block and balance. The data is stored in order to
 // avoid double crediting transactions which have already been processed, and in
 // order to resume watching from the last observed point.
@@ -113,7 +115,7 @@ impl LeftoversStore for EthereumLedgerRedisStore {
     async fn get_uncredited_settlement_amount(
         &self,
         account_id: Self::AccountId,
-    ) -> Result<(Self::AssetType, u8), ()> {
+    ) -> Result<(Self::AssetType, u8), LeftoversStoreError> {
         self.redis_store
             .get_uncredited_settlement_amount(account_id)
             .await
@@ -123,7 +125,7 @@ impl LeftoversStore for EthereumLedgerRedisStore {
         &self,
         account_id: Self::AccountId,
         uncredited_settlement_amount: (Self::AssetType, u8),
-    ) -> Result<(), ()> {
+    ) -> Result<(), LeftoversStoreError> {
         self.redis_store
             .save_uncredited_settlement_amount(account_id, uncredited_settlement_amount)
             .await
@@ -133,7 +135,7 @@ impl LeftoversStore for EthereumLedgerRedisStore {
         &self,
         account_id: Self::AccountId,
         local_scale: u8,
-    ) -> Result<Self::AssetType, ()> {
+    ) -> Result<Self::AssetType, LeftoversStoreError> {
         self.redis_store
             .load_uncredited_settlement_amount(account_id, local_scale)
             .await
@@ -142,7 +144,7 @@ impl LeftoversStore for EthereumLedgerRedisStore {
     async fn clear_uncredited_settlement_amount(
         &self,
         account_id: Self::AccountId,
-    ) -> Result<(), ()> {
+    ) -> Result<(), LeftoversStoreError> {
         self.redis_store
             .clear_uncredited_settlement_amount(account_id)
             .await
@@ -154,7 +156,7 @@ impl IdempotentStore for EthereumLedgerRedisStore {
     async fn load_idempotent_data(
         &self,
         idempotency_key: String,
-    ) -> Result<Option<IdempotentData>, ()> {
+    ) -> Result<Option<IdempotentData>, IdempotentStoreError> {
         self.redis_store.load_idempotent_data(idempotency_key).await
     }
 
@@ -164,7 +166,7 @@ impl IdempotentStore for EthereumLedgerRedisStore {
         input_hash: [u8; 32],
         status_code: StatusCode,
         data: Bytes,
-    ) -> Result<(), ()> {
+    ) -> Result<(), IdempotentStoreError> {
         self.redis_store
             .save_idempotent_data(idempotency_key, input_hash, status_code, data)
             .await

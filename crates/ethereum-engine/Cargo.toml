@@ -13,9 +13,10 @@ log = "0.4.6"
 tokio = { version = "0.2.8", features = ["macros", "rt-core", "time"] }
 hyper = "0.13"
 futures = { version = "0.3", features = ["compat"] }
-interledger-service = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/futures03" }
-interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/futures03" }
-interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/futures03", default-features = false  }
+interledger-service = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
+interledger-http = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
+interledger-settlement = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master", default-features = false  }
+interledger-errors = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master", default-features = false  }
 ethabi = "8.0.1"
 serde = { version = "1.0.101", default-features = false }
 serde_json = { version = "1.0.41", default-features = false }
@@ -55,8 +56,8 @@ parking_lot = "0.9.0"
 net2 = "0.2.33"
 os_type = "2.2.0"
 rand = "0.7.0"
-interledger = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/futures03" }
-ilp-node = { git = "https://github.com/interledger-rs/interledger-rs", branch = "gakonst/futures03" }
+interledger = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
+ilp-node = { git = "https://github.com/interledger-rs/interledger-rs", branch = "master" }
 
 [features]
 default = ["redis"]
