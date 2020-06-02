@@ -15,8 +15,10 @@ mod test_helpers;
 use test_helpers::{
     accounts_to_ids, create_account_on_node, get_all_accounts, get_balance, random_secret,
     send_money_to_username, set_node_settlement_engines, start_ganache, start_xrp_engine,
-    BalanceData,
+    BalanceData, ALICE, BOB,
 };
+
+use ilp_settlement_ethereum::ethereum::EthClient;
 
 #[cfg(feature = "redis")]
 use test_helpers::{redis_helpers::*, start_eth_engine};
@@ -71,10 +73,8 @@ async fn eth_xrp_interoperable() {
     );
     std::thread::sleep(std::time::Duration::from_secs(15));
 
-    let node1_eth_key =
-        "380eb0f3d505f087e438eca80bc4df9a7faa24f868e69fc0440261a0fc0567dc".to_string();
-    let node2_eth_key =
-        "cc96601bc52293b53c4736a12af9130abf347669b3813f9ec4cafdf6991b087e".to_string();
+    let node1_eth_key = EthClient::new(None, &ALICE);
+    let node2_eth_key = EthClient::new(None, &BOB);
 
     start_eth_engine(
         connection_info1.clone(),

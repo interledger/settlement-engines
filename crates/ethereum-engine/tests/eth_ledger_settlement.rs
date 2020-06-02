@@ -3,6 +3,7 @@
 #![allow(unused_imports)]
 
 use env_logger;
+use ethers::prelude::*;
 use futures::future::join_all;
 use futures::Future;
 use ilp_node::InterledgerNode;
@@ -16,8 +17,10 @@ use tokio::runtime::Builder as RuntimeBuilder;
 mod test_helpers;
 use test_helpers::{
     accounts_to_ids, create_account_on_engine, create_account_on_node, get_all_accounts,
-    get_balance, random_secret, send_money_to_username, start_ganache, BalanceData,
+    get_balance, random_secret, send_money_to_username, start_ganache, BalanceData, ALICE, BOB,
 };
+
+use ilp_settlement_ethereum::ethereum::EthClient;
 
 #[cfg(feature = "redis")]
 use test_helpers::{redis_helpers::*, start_eth_engine};
@@ -48,12 +51,12 @@ async fn eth_ledger_settlement() {
     let node1_settlement = get_open_port(Some(3011));
     let node1_engine = get_open_port(Some(3012));
     let node1_engine_address = SocketAddr::from(([127, 0, 0, 1], node1_engine));
-    let alice_key = "380eb0f3d505f087e438eca80bc4df9a7faa24f868e69fc0440261a0fc0567dc".to_string();
+    let alice_key = EthClient::new(None, &ALICE);
     let node2_http = get_open_port(Some(3020));
     let node2_settlement = get_open_port(Some(3021));
     let node2_engine = get_open_port(Some(3022));
     let node2_engine_address = SocketAddr::from(([127, 0, 0, 1], node2_engine));
-    let bob_key = "cc96601bc52293b53c4736a12af9130abf347669b3813f9ec4cafdf6991b087e".to_string();
+    let bob_key = EthClient::new(None, &BOB);
 
     let node1: InterledgerNode = serde_json::from_value(json!({
         "ilp_address": "example.alice",

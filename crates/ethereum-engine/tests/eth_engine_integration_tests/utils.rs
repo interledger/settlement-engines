@@ -1,24 +1,21 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::cmp::Ordering;
-use std::process::Command;
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use hyper::StatusCode;
+use http::StatusCode;
+use std::cmp::Ordering;
 use std::str::FromStr;
 
-use web3::types::{Address, H256, U256};
+use ethers::core::types::{Address, H256, U64};
 
-use ilp_settlement_ethereum::engine::{
-    EthereumLedgerSettlementEngine, EthereumLedgerSettlementEngineBuilder,
-};
-use ilp_settlement_ethereum::utils::types::{
-    Addresses, EthereumAccount, EthereumLedgerTxSigner, EthereumStore,
-};
-use interledger_errors::{IdempotentStoreError, LeftoversStoreError};
+use ilp_settlement_ethereum::ethereum::{EthClient, HttpClient};
+use ilp_settlement_ethereum::utils::types::{Addresses, EthereumAccount, EthereumStore};
+use ilp_settlement_ethereum::EthereumLedgerSettlementEngine;
+
+use interledger_errors::*;
 use interledger_settlement::core::{
     idempotency::{IdempotentData, IdempotentStore},
     scale_with_precision_loss,
@@ -60,7 +57,7 @@ pub struct TestStore {
     pub address_to_id: Arc<RwLock<HashMap<Addresses, String>>>,
     #[allow(clippy::all)]
     pub cache: Arc<RwLock<HashMap<String, IdempotentData>>>,
-    pub last_observed_block: Arc<RwLock<U256>>,
+    pub last_observed_block: Arc<RwLock<U64>>,
     pub saved_hashes: Arc<RwLock<HashMap<H256, bool>>>,
     pub cache_hits: Arc<RwLock<u64>>,
     pub uncredited_settlement_amount: Arc<RwLock<HashMap<String, (BigUint, u8)>>>,
@@ -198,14 +195,14 @@ impl EthereumStore for TestStore {
     async fn save_recently_observed_block(
         &self,
         _net_version: String,
-        block: U256,
+        block: U64,
     ) -> Result<(), ()> {
         let mut guard = self.last_observed_block.write();
         *guard = block;
         Ok(())
     }
 
-    async fn load_recently_observed_block(&self, _net_version: String) -> Result<Option<U256>, ()> {
+    async fn load_recently_observed_block(&self, _net_version: String) -> Result<Option<U64>, ()> {
         let b = *self.last_observed_block.read();
         Ok(Some(b))
     }
@@ -297,7 +294,7 @@ impl TestStore {
             address_to_id: Arc::new(RwLock::new(address_to_id)),
             cache: Arc::new(RwLock::new(HashMap::new())),
             cache_hits: Arc::new(RwLock::new(0)),
-            last_observed_block: Arc::new(RwLock::new(U256::from(0))),
+            last_observed_block: Arc::new(RwLock::new(U64::from(0))),
             saved_hashes: Arc::new(RwLock::new(HashMap::new())),
             uncredited_settlement_amount: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -318,17 +315,15 @@ impl TestAccount {
 }
 
 // Helper to create a new engine
-pub async fn test_engine<Si, S, A>(
+pub async fn test_engine<S, A>(
     store: S,
-    key: Si,
+    client: &'static HttpClient,
     confs: u8,
     connector_url: &str,
-    ganache_port: u16,
     token_address: Option<Address>,
     watch_incoming: bool,
-) -> EthereumLedgerSettlementEngine<S, Si, A>
+) -> EthereumLedgerSettlementEngine<'static, S, A>
 where
-    Si: EthereumLedgerTxSigner + Clone + Send + Sync + 'static,
     S: EthereumStore<Account = A>
         + LeftoversStore<AccountId = String, AssetType = BigUint>
         + IdempotentStore
@@ -338,15 +333,24 @@ where
         + 'static,
     A: EthereumAccount<AccountId = String> + Clone + Send + Sync + 'static,
 {
-    EthereumLedgerSettlementEngineBuilder::new(store, key)
-        .connector_url(connector_url)
-        .ethereum_endpoint(&format!("http://localhost:{}", ganache_port))
-        .token_address(token_address)
-        .confirmations(confs)
-        .watch_incoming(watch_incoming)
-        .poll_frequency(1000)
-        .connect()
-        .await
+    let freq = std::time::Duration::from_millis(1000);
+    let eth_client = EthClient::new(token_address, client);
+    let engine = EthereumLedgerSettlementEngine {
+        store,
+        eth_client,
+        asset_scale: 18,
+        chain_id: 1,
+        confirmations: confs,
+        connector_url: connector_url.parse().unwrap(),
+        challenges: Arc::new(RwLock::new(HashMap::new())),
+        account_type: std::marker::PhantomData,
+    };
+
+    if watch_incoming {
+        engine.spawn(freq);
+    }
+
+    engine
 }
 
 pub fn test_store(
@@ -358,17 +362,4 @@ pub fn test_store(
     let mut acc = account;
     acc.no_details = !account_has_engine;
     TestStore::new(vec![acc], store_fails, initialize)
-}
-
-pub fn start_ganache(port: u16) -> std::process::Child {
-    let mut ganache = Command::new("ganache-cli");
-    let ganache = ganache
-        .stdout(std::process::Stdio::null())
-        .arg("-m").arg("abstract vacuum mammal awkward pudding scene penalty purchase dinner depart evoke puzzle")
-        .arg("-p").arg(port.to_string());
-    let ganache_pid = ganache.spawn().expect("couldnt start ganache-cli");
-    // wait a couple of seconds for ganache to boot up
-    let sleep_time = std::time::Duration::from_secs(5);
-    std::thread::sleep(sleep_time);
-    ganache_pid
 }

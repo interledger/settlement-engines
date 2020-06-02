@@ -3,9 +3,6 @@ use interledger::{packet::Address, service::Account as AccountTrait, store::acco
 use uuid::Uuid;
 
 #[cfg(feature = "redis")]
-use ilp_settlement_ethereum::engine::redis_bin::{run_ethereum_engine, EthereumLedgerOpt};
-
-#[cfg(feature = "redis")]
 pub mod redis_helpers;
 
 #[cfg(feature = "redis")]
@@ -13,22 +10,30 @@ use redis_crate::ConnectionInfo;
 
 use hex;
 use interledger::stream::StreamDelivery;
-use ring::rand::{SecureRandom, SystemRandom};
-use secrecy::Secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
-use std::fmt::{Debug, Display};
-use std::net::SocketAddr;
-use std::process::Command;
-use std::str;
-use std::thread::sleep;
-use std::time::Duration;
+
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    net::SocketAddr,
+    process::Command,
+    str,
+    thread::sleep,
+    time::Duration,
+};
+
+use rand::{thread_rng, Rng};
+
+use ilp_settlement_ethereum::{ethereum::EthClient, run::run_ethereum_engine};
+
+use ethers::prelude::*;
+use std::convert::TryFrom;
 
 #[allow(unused)]
 pub fn random_secret() -> String {
     let mut bytes: [u8; 32] = [0; 32];
-    SystemRandom::new().fill(&mut bytes).unwrap();
+    thread_rng().fill(&mut bytes);
     hex::encode(bytes)
 }
 
@@ -44,6 +49,26 @@ pub struct BalanceData {
 }
 
 #[allow(unused)]
+pub static ALICE: Lazy<HttpClient> = Lazy::new(|| {
+    // empty private key
+    let wallet = "380eb0f3d505f087e438eca80bc4df9a7faa24f868e69fc0440261a0fc0567dc"
+        .parse::<Wallet>()
+        .unwrap();
+    let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+    wallet.connect(provider)
+});
+
+#[allow(unused)]
+pub static BOB: Lazy<HttpClient> = Lazy::new(|| {
+    // empty private key
+    let wallet = "cc96601bc52293b53c4736a12af9130abf347669b3813f9ec4cafdf6991b087e"
+        .parse::<Wallet>()
+        .unwrap();
+    let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+    wallet.connect(provider)
+});
+
+#[allow(unused)]
 pub fn start_ganache() -> std::process::Child {
     let mut ganache = Command::new("ganache-cli");
     let ganache = ganache.stdout(std::process::Stdio::null()).arg("-m").arg(
@@ -51,7 +76,7 @@ pub fn start_ganache() -> std::process::Child {
     );
     let ganache_pid = ganache.spawn().expect("couldnt start ganache-cli");
     // wait a couple of seconds for ganache to boot up
-    sleep(Duration::from_secs(5));
+    sleep(Duration::from_secs(2));
     ganache_pid
 }
 
@@ -82,22 +107,22 @@ pub fn start_xrp_engine(
 pub async fn start_eth_engine(
     db: ConnectionInfo,
     http_address: SocketAddr,
-    key: String,
+    eth_client: EthClient<'static>,
     settlement_port: u16,
-) -> Result<(), ()> {
-    run_ethereum_engine(EthereumLedgerOpt {
-        private_key: Secret::new(key),
-        settlement_api_bind_address: http_address,
-        ethereum_url: "http://localhost:8545".to_string(),
-        token_address: None,
-        connector_url: format!("http://127.0.0.1:{}", settlement_port),
-        redis_connection: db,
-        chain_id: 1,
-        confirmations: 0,
-        asset_scale: 18,
-        poll_frequency: 1000,
-        watch_incoming: true,
-    })
+) -> anyhow::Result<()> {
+    run_ethereum_engine(
+        db,
+        eth_client,
+        format!("http://127.0.0.1:{}", settlement_port)
+            .parse()
+            .unwrap(),
+        http_address,
+        1000,
+        18,
+        1,
+        0,
+        true,
+    )
     .await
 }
 
