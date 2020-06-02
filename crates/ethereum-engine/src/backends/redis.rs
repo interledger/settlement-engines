@@ -1,11 +1,13 @@
+use crate::utils::types::{Addresses as EthereumAddresses, EthereumAccount, EthereumStore};
+
 use futures::future::TryFutureExt;
 
 use bytes::Bytes;
+use ethers::core::types::{Address as EthAddress, H256, U64};
+
 use http::StatusCode;
 use std::collections::HashMap;
-use web3::types::{Address as EthAddress, H256, U256};
 
-use crate::utils::types::{Addresses as EthereumAddresses, EthereumAccount, EthereumStore};
 use async_trait::async_trait;
 use num_bigint::BigUint;
 use redis_crate::{self as redis, aio::MultiplexedConnection, cmd, AsyncCommands, ConnectionInfo};
@@ -276,7 +278,7 @@ impl EthereumStore for EthereumLedgerRedisStore {
     async fn save_recently_observed_block(
         &self,
         net_version: String,
-        block: U256,
+        block: U64,
     ) -> Result<(), ()> {
         let mut connection = self.connection.clone();
         connection
@@ -286,13 +288,13 @@ impl EthereumStore for EthereumLedgerRedisStore {
         Ok(())
     }
 
-    async fn load_recently_observed_block(&self, net_version: String) -> Result<Option<U256>, ()> {
+    async fn load_recently_observed_block(&self, net_version: String) -> Result<Option<U64>, ()> {
         let mut connection = self.connection.clone();
         let block: Option<u64> = connection
             .hget(RECENTLY_OBSERVED_BLOCK_KEY, net_version)
             .map_err(move |err| error!("Error loading last observed block: {:?}", err))
             .await?;
-        Ok(block.map(U256::from))
+        Ok(block.map(U64::from))
     }
 
     async fn load_account_id_from_address(
@@ -404,8 +406,8 @@ mod tests {
     #[tokio::test]
     async fn saves_and_loads_last_observed_data_properly() {
         let (store, _context) = test_store().await;
-        let block1 = U256::from(1);
-        let block2 = U256::from(2);
+        let block1 = U64::from(1);
+        let block2 = U64::from(2);
         store
             .save_recently_observed_block("1".to_owned(), block1)
             .await

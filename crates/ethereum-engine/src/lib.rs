@@ -20,4 +20,12 @@
 
 pub mod backends;
 pub mod engine;
+pub use engine::EthereumLedgerSettlementEngine;
+
 pub mod utils;
+
+pub mod ethereum;
+
+pub mod run;
+
+pub use ethereum::{EthClient, EthError, IncomingTransfer};
